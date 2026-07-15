@@ -13,7 +13,6 @@ export const conn = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   ssl: {
-    ca: process.env.DB_CA_CERT,
-    rejectUnauthorized: true, // เพิ่มส่วนนี้ทั้งหมด - Aiven บังคับใช้ SSL
+    rejectUnauthorized: false, // เพิ่มส่วนนี้ทั้งหมด - Aiven บังคับใช้ SSL
   },
 });
