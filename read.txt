@@ -7,3 +7,7 @@ npx tsx watch server.ts
 npm install mysql2 dotenv
 
 npm install -D @types/node
+
+git add .
+git commit -m "่up"
+git push origin main
