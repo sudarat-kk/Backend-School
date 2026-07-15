@@ -4,12 +4,15 @@ import dotenv from "dotenv";
 dotenv.config(); // โหลดค่าจากไฟล์ .env
 
 export const conn = mysql.createPool({
-  // เพิ่ม as string เพื่อบอก TypeScript ว่าค่านี้เป็น string แน่นอน
   host: process.env.DB_HOST as string,
+  port: Number(process.env.DB_PORT), // เพิ่มบรรทัดนี้
   user: process.env.DB_USER as string,
   password: process.env.DB_PASSWORD as string,
   database: process.env.DB_NAME as string,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  ssl: {
+    rejectUnauthorized: true, // เพิ่มส่วนนี้ทั้งหมด - Aiven บังคับใช้ SSL
+  },
 });
