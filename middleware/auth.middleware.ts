@@ -1,0 +1,46 @@
+import { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
+
+// สร้าง Interface พิเศษเพื่อให้รองรับตัวแปร user ใน Request ของ TypeScript
+export interface AuthRequest extends Request {
+  user?: any;
+}
+
+export const verifyToken = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void => {
+  // 1. ดึง Token มาจาก Header
+  const authHeader = req.headers["authorization"];
+  // ปกติ Frontend จะส่งมาเป็น "Bearer eyJhbGci..." เราจึงต้อง split เว้นวรรคเอาตัวที่ 2
+  const token = authHeader && authHeader.split(" ")[1];
+
+  // ถ้าไม่มี Token แนบมา แสดงว่ายังไม่ได้ล็อคอิน
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      message: "กรุณาเข้าสู่ระบบ (Token is missing)",
+    });
+    return;
+  }
+
+  try {
+    // 2. ตรวจสอบความถูกต้องของ Token
+    const secretKey = process.env.JWT_SECRET || "SIGNAL"; // ต้องตรงกับตอนล็อคอิน
+    const decoded = jwt.verify(token, secretKey);
+
+    // 3. แนบข้อมูลที่ถอดรหัสได้ (เช่น student_id, batch_id) ไปกับ Request
+    req.user = decoded;
+
+    // 4. ให้ผ่านด่านไปทำงานที่ Controller ถัดไปได้
+    next();
+  } catch (error) {
+    // ถ้า Token หมดอายุ หรือมีการแก้ไข Token มั่วๆ จะตกมาที่นี่
+    res.status(403).json({
+      success: false,
+      message: "เซสชันหมดอายุ หรือไม่ได้รับอนุญาต (Invalid Token)",
+    });
+    return;
+  }
+};

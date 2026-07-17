@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors"; // 1. Import cors เข้ามา
 import courseRoutes from "./routes/course.route";
 import authRoutes from "./routes/auth.route"; // Import routes สำหรับ auth]
+import scoreRoutes from "./routes/score.route"; // Import routes สำหรับ score
 
 const app = express();
 
@@ -15,5 +16,6 @@ app.use(express.json());
 // Routes
 app.use("/api", courseRoutes);
 app.use("/api", authRoutes); // ถ้าคุณมี route สำหรับ auth
+app.use("/api", scoreRoutes); // เพิ่ม route สำหรับ score
 
 export default app;

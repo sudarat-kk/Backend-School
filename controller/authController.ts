@@ -57,6 +57,8 @@ export const studentLogin = async (
       message: "เข้าสู่ระบบสำเร็จ",
       token: token,
       studentData: {
+        student_id: student.id, // 👈 เพิ่มบรรทัดนี้ เพื่อให้ Frontend เอาไปยิง API เก็บคะแนนได้ทันที
+        batch_id: student.batch_id,
         first_name: student.first_name,
         last_name: student.last_name,
         rank_name: student.rank_name,
