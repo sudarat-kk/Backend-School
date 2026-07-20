@@ -72,3 +72,76 @@ export const studentLogin = async (
     });
   }
 };
+
+export const adminLogin = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  const { email, password } = req.body;
+
+  try {
+    // 1. ตรวจสอบว่าส่งข้อมูลมาครบไหม
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน",
+      });
+    }
+
+    // 2. ค้นหาแอดมินจากอีเมล
+    const sql = `SELECT * FROM admin WHERE email = ? LIMIT 1`;
+    const [rows]: any = await conn.query(sql, [email]);
+
+    if (rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "ไม่พบข้อมูลอีเมลนี้ในระบบ",
+      });
+    }
+
+    const admin = rows[0];
+
+    // 3. ตรวจสอบรหัสผ่าน
+    // ตอนนี้ใช้แบบ plain text ไปก่อนเพราะคุณ Insert '12345678' เข้าไปตรงๆ ตอนเทสต์
+    const isMatch = password === admin.password;
+
+    // 💡 แนะนำ: ถ้าขึ้นระบบจริง (Production) ควรเปลี่ยนไปใช้ bcrypt
+    // const isMatch = await bcrypt.compare(password, admin.password);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "รหัสผ่านไม่ถูกต้อง",
+      });
+    }
+
+    // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
+    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+
+    const token = jwt.sign(
+      {
+        admin_id: admin.id,
+        email: admin.email,
+        role: "admin", // 👈 ใส่ role ไปใน token เผื่อไว้แยกสิทธิ์ตรวจสอบ (Middleware) ว่าเป็นแอดมินจริงๆ
+      },
+      secretKey,
+      { expiresIn: "1d" }, // 👈 แอดมินมักจะใช้งานนานกว่านักเรียน เลยตั้งให้หมดอายุใน 1 วัน (1d) ไปเลย
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "แอดมินเข้าสู่ระบบสำเร็จ",
+      token: token,
+      adminData: {
+        admin_id: admin.id,
+        email: admin.email,
+      },
+    });
+  } catch (error: any) {
+    console.error("Admin Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดที่เซิร์ฟเวอร์",
+    });
+  }
+};
