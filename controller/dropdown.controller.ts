@@ -1,0 +1,81 @@
+import { Request, Response } from "express";
+import { conn } from "../dbconn";
+
+// 1. ดึงข้อมูลหลักสูตรทั้งหมด
+export const getCourses = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const sql = `SELECT id, course_name FROM courses ORDER BY id DESC`;
+    const [rows] = await conn.query(sql);
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error fetching courses:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงหลักสูตร" });
+  }
+};
+
+// 2. ดึงข้อมูลรุ่น (กรองตาม course_id)
+export const getBatchesByCourse = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const courseId = req.query.course_id;
+  try {
+    let sql = `SELECT id, batch_name FROM course_batches`;
+    let params: any[] = [];
+
+    // ถ้ามีการส่ง course_id มา ให้กรองเฉพาะรุ่นของหลักสูตรนั้น
+    if (courseId && courseId !== "all") {
+      sql += ` WHERE course_id = ?`;
+      params.push(courseId);
+    }
+    sql += ` ORDER BY id DESC`;
+
+    const [rows] = await conn.query(sql, params);
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error fetching batches:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงรุ่น" });
+  }
+};
+
+// 3. ดึงข้อมูลรายวิชา (กรองตาม batch_id) พร้อมคะแนนเต็ม
+export const getSubjectsByBatch = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const batchId = req.query.batch_id;
+  if (!batchId) {
+    res.status(400).json({ success: false, message: "กรุณาระบุ batch_id" });
+    return;
+  }
+
+  try {
+    // JOIN 3 ตาราง: subjects, subject_groups และ subject_batch_settings เพื่อดึงชื่อและคะแนนเต็ม
+    const sql = `
+      SELECT 
+        sub.id AS subject_id, 
+        sub.subject_name, 
+        sg.group_name,
+        COALESCE(sbs.max_score, 0) AS max_score
+      FROM subjects sub
+      JOIN subject_groups sg ON sub.group_id = sg.id
+      LEFT JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id AND sbs.batch_id = sg.batch_id
+      WHERE sg.batch_id = ?
+      ORDER BY sg.id ASC, sub.id ASC
+    `;
+    const [rows] = await conn.query(sql, [batchId]);
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error fetching subjects:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงรายวิชา" });
+  }
+};

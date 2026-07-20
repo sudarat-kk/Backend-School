@@ -1,6 +1,8 @@
 import { Router } from "express";
 import {
+  getAdminSubjectScores,
   getStudentScores,
+  saveAdminBulkScores,
   saveScoresAndCalculate,
   saveSingleScore,
   updateSubjectMaxScore,
@@ -14,4 +16,6 @@ router.post("/scores/bulk", saveScoresAndCalculate);
 router.post("/scores/single", saveSingleScore);
 router.put("/settings/max-score", updateSubjectMaxScore);
 router.get("/students/:student_id/scores", verifyToken, getStudentScores);
+router.get("/admin/scores", getAdminSubjectScores);
+router.post("/admin/scores/bulk", saveAdminBulkScores);
 export default router;
