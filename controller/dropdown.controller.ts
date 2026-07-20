@@ -7,14 +7,42 @@ export const getCourses = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const sql = `SELECT id, course_name FROM courses ORDER BY id DESC`;
-    const [rows] = await conn.query(sql);
-    res.status(200).json({ success: true, data: rows });
+    // 1. ดึงหลักสูตรและรุ่นมาพร้อมกันเลย (เรียงจากล่าสุดไปเก่าสุด)
+    const sql = `
+      SELECT 
+        c.course_name, 
+        cb.id AS batch_id, 
+        cb.batch_name 
+      FROM courses c
+      LEFT JOIN course_batches cb ON c.id = cb.course_id
+      ORDER BY c.id DESC, cb.id DESC
+    `;
+    const [rows]: any = await conn.query(sql);
+
+    // 2. จัดกลุ่มข้อมูลให้ชื่อหลักสูตรไม่ซ้ำกัน (เหมือน Header)
+    const groupedData = rows.reduce((acc: any, row: any) => {
+      let course = acc.find((c: any) => c.course_name === row.course_name);
+
+      if (!course) {
+        course = { course_name: row.course_name, batches: [] };
+        acc.push(course);
+      }
+
+      if (row.batch_id) {
+        course.batches.push({
+          batch_id: row.batch_id,
+          batch_name: row.batch_name,
+        });
+      }
+      return acc;
+    }, []);
+
+    res.status(200).json({ success: true, data: groupedData });
   } catch (error) {
-    console.error("Error fetching courses:", error);
+    console.error("Error fetching grouped courses:", error);
     res
       .status(500)
-      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงหลักสูตร" });
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูล" });
   }
 };
 
