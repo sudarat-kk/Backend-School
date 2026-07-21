@@ -74,6 +74,7 @@ export const getBatchesByCourse = async (
 };
 
 // 3. ดึงข้อมูลรายวิชา (กรองตาม batch_id) พร้อมคะแนนเต็ม
+// 3. ดึงข้อมูลรายวิชา (กรองตาม batch_id) พร้อมคะแนนเต็ม
 export const getSubjectsByBatch = async (
   req: Request,
   res: Response,
@@ -90,6 +91,7 @@ export const getSubjectsByBatch = async (
       SELECT 
         sub.id AS subject_id, 
         sub.subject_name, 
+        sub.group_id,     -- 🌟 เพิ่มบรรทัดนี้เข้ามาครับ! 🌟
         sg.group_name,
         COALESCE(sbs.max_score, 0) AS max_score
       FROM subjects sub
@@ -131,11 +133,9 @@ export const getSubjectGroupsByBatch = async (
     res.status(200).json({ success: true, data: rows });
   } catch (error) {
     console.error("Error fetching subject groups:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "เกิดข้อผิดพลาดในการดึงข้อมูลหมวดวิชา",
-      });
+    res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการดึงข้อมูลหมวดวิชา",
+    });
   }
 };

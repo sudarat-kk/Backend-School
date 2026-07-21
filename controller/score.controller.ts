@@ -367,7 +367,6 @@ export const processGroupGrades = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  // เปลี่ยนมารับค่า group_id แทน group_name
   const batchId = req.query.batch_id;
   const groupId = req.query.group_id;
 
@@ -380,14 +379,13 @@ export const processGroupGrades = async (
   }
 
   try {
-    // 1. ดึงเกณฑ์การตัดเกรด (เหมือนเดิม)
+    // 1. ดึงเกณฑ์การตัดเกรด
     let [criteria]: any = await conn.query(
       `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
        WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
       [batchId],
     );
 
-    // 👇 แก้ไขตัวเลข min_percent ตรงนี้ให้ตรงกับสูตร Excel ของคุณครับ
     if (criteria.length === 0) {
       criteria = [
         { grade_name: "A", grade_point: 4.0, min_percent: 91 },
@@ -401,9 +399,9 @@ export const processGroupGrades = async (
       ];
     }
 
-    // 2. ดึงข้อมูลกลุ่มวิชา (M01, M02...) และวิชาย่อยทั้งหมดที่อยู่ในกลุ่มนี้
+    // 🌟 2. [ส่วนที่แก้ไข] ดึงข้อมูลวิชาย่อย เพื่อนำไปสร้างเป็นคอลัมน์ 🌟
     const groupSql = `
-      SELECT sg.group_name, sg.credits AS total_credit, sub.subject_name, sbs.max_score
+      SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score
       FROM subject_groups sg
       JOIN subjects sub ON sg.id = sub.group_id
       JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
@@ -421,39 +419,58 @@ export const processGroupGrades = async (
       return;
     }
 
-    // ดึงชื่อกลุ่มและหน่วยกิตมาจากแถวแรกได้เลย (เพราะมันเหมือนกันทุกแถว)
     const actualGroupName = subjectsInGroup[0].group_name;
     const totalGroupCredit = Number(subjectsInGroup[0].total_credit) || 0;
 
     let totalGroupMaxScore = 0;
-    const subjectNamesList: string[] = [];
-
-    subjectsInGroup.forEach((sub: any, index: number) => {
-      totalGroupMaxScore += Number(sub.max_score) || 0;
-      subjectNamesList.push(
-        `${index + 1}. ${sub.subject_name} (${sub.max_score})`,
-      );
+    // สร้าง Array เก็บรายวิชาเพื่อส่งไปวาดหัวตารางใน Angular
+    const subjectColumns = subjectsInGroup.map((s: any) => {
+      totalGroupMaxScore += Number(s.max_score) || 0;
+      return {
+        subject_id: s.subject_id,
+        subject_name: s.subject_name,
+        max_score: Number(s.max_score) || 0,
+      };
     });
 
-    // 3. ดึงคะแนนของนักเรียน (JOIN ด้วย group_id แทน)
+    // 🌟 3. [ส่วนที่แก้ไข] ดึงคะแนนดิบทั้งหมดแยกตามรายวิชา ไม่ใช้ SUM() แล้ว 🌟
     const scoreSql = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
-        SUM(ss.raw_score) AS total_raw_score
+        ss.raw_score, sub.id AS subject_id
       FROM students st
       JOIN student_scores ss ON st.id = ss.student_id
       JOIN subject_batch_settings sbs ON ss.setting_id = sbs.id
       JOIN subjects sub ON sbs.subject_id = sub.id
       WHERE sbs.batch_id = ? AND sub.group_id = ?
-      GROUP BY st.id, st.student_code, st.rank_name, st.first_name, st.last_name
-      ORDER BY st.student_code ASC
     `;
-    const [studentScores]: any = await conn.query(scoreSql, [batchId, groupId]);
+    const [rawScores]: any = await conn.query(scoreSql, [batchId, groupId]);
 
-    // 4. ตัดเกรดและคำนวณค่าประกอบ
-    const finalResults = studentScores.map((st: any) => {
-      const rawScore = Number(st.total_raw_score) || 0;
-      const percent = (rawScore / totalGroupMaxScore) * 100;
+    // นำคะแนนมาจัดกลุ่มตามนักเรียนแต่ละคน
+    const studentMap = new Map();
+
+    rawScores.forEach((row: any) => {
+      // ถ้านักเรียนคนนี้ยังไม่มีใน Map ให้สร้างใหม่พร้อมกระเป๋าเก็บคะแนนแยกวิชา (subject_scores)
+      if (!studentMap.has(row.student_id)) {
+        studentMap.set(row.student_id, {
+          student_id: row.student_id,
+          student_code: row.student_code,
+          full_name: `${row.rank_name} ${row.first_name} ${row.last_name}`,
+          total_raw_score: 0,
+          subject_scores: {}, // 👈 กระเป๋าเก็บคะแนนแต่ละวิชา
+        });
+      }
+
+      const st = studentMap.get(row.student_id);
+      const score = Number(row.raw_score) || 0;
+
+      st.subject_scores[row.subject_id] = score; // หยอดคะแนนลงวิชาที่ตรงกัน
+      st.total_raw_score += score; // บวกคะแนนรวม
+    });
+
+    // 4. ตัดเกรดและคำนวณค่าประกอบ (Index)
+    const finalResults = Array.from(studentMap.values()).map((st: any) => {
+      const percent = (st.total_raw_score / totalGroupMaxScore) * 100;
 
       let assignedGrade = criteria[criteria.length - 1];
       for (const c of criteria) {
@@ -468,24 +485,25 @@ export const processGroupGrades = async (
       return {
         student_id: st.student_id,
         student_code: st.student_code,
-        full_name: `${st.rank_name} ${st.first_name} ${st.last_name}`,
-        total_raw_score: rawScore.toFixed(2),
+        full_name: st.full_name,
+        total_raw_score: st.total_raw_score.toFixed(2),
         total_max_score: totalGroupMaxScore,
         percent: percent.toFixed(2),
         grade: assignedGrade.grade_name,
         grade_point: assignedGrade.grade_point,
         index_value: indexValue.toFixed(2),
+        subject_scores: st.subject_scores, // 👈 ส่งกระเป๋าคะแนนแยกวิชากลับไปด้วย
       };
     });
 
-    // 5. ส่งกลับ
+    // 5. ส่งกลับข้อมูลไปให้หน้าเว็บ
     res.status(200).json({
       success: true,
       summary: {
         group_name: actualGroupName,
         total_credit: totalGroupCredit,
         total_max_score: totalGroupMaxScore,
-        subjects_list_text: subjectNamesList.join(", "),
+        subjects: subjectColumns, // 👈 ส่งหัวตารางกลับไปให้ Angular วนลูป
       },
       data: finalResults,
     });
