@@ -107,3 +107,35 @@ export const getSubjectsByBatch = async (
       .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงรายวิชา" });
   }
 };
+// ดึงข้อมูลกลุ่มวิชาตาม batch_id
+export const getSubjectGroupsByBatch = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const batchId = req.query.batch_id;
+
+  if (!batchId) {
+    res.status(400).json({ success: false, message: "กรุณาระบุ batch_id" });
+    return;
+  }
+
+  try {
+    // อ้างอิงจากโครงสร้างตาราง subject_groups ของคุณ
+    const sql = `
+      SELECT id, group_name, credits 
+      FROM subject_groups 
+      WHERE batch_id = ?
+    `;
+    const [rows]: any = await conn.query(sql, [batchId]);
+
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error fetching subject groups:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "เกิดข้อผิดพลาดในการดึงข้อมูลหมวดวิชา",
+      });
+  }
+};

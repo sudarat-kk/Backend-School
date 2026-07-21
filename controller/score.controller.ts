@@ -256,12 +256,10 @@ export const getAdminSubjectScores = async (
     ]);
 
     if (settingRows.length === 0) {
-      res
-        .status(404)
-        .json({
-          success: false,
-          message: "ยังไม่ได้ตั้งค่าคะแนนเต็ม (max_score) สำหรับวิชานี้",
-        });
+      res.status(404).json({
+        success: false,
+        message: "ยังไม่ได้ตั้งค่าคะแนนเต็ม (max_score) สำหรับวิชานี้",
+      });
       return;
     }
 
@@ -363,5 +361,138 @@ export const saveAdminBulkScores = async (
       .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
   } finally {
     connection.release();
+  }
+};
+export const processGroupGrades = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  // เปลี่ยนมารับค่า group_id แทน group_name
+  const batchId = req.query.batch_id;
+  const groupId = req.query.group_id;
+
+  if (!batchId || !groupId) {
+    res.status(400).json({
+      success: false,
+      message: "กรุณาระบุ batch_id และ group_id ให้ครบถ้วน",
+    });
+    return;
+  }
+
+  try {
+    // 1. ดึงเกณฑ์การตัดเกรด (เหมือนเดิม)
+    let [criteria]: any = await conn.query(
+      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
+       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
+      [batchId],
+    );
+
+    // 👇 แก้ไขตัวเลข min_percent ตรงนี้ให้ตรงกับสูตร Excel ของคุณครับ
+    if (criteria.length === 0) {
+      criteria = [
+        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
+        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
+        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
+        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
+        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
+        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
+        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
+        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
+      ];
+    }
+
+    // 2. ดึงข้อมูลกลุ่มวิชา (M01, M02...) และวิชาย่อยทั้งหมดที่อยู่ในกลุ่มนี้
+    const groupSql = `
+      SELECT sg.group_name, sg.credits AS total_credit, sub.subject_name, sbs.max_score
+      FROM subject_groups sg
+      JOIN subjects sub ON sg.id = sub.group_id
+      JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
+      WHERE sg.id = ? AND sbs.batch_id = ?
+    `;
+    const [subjectsInGroup]: any = await conn.query(groupSql, [
+      groupId,
+      batchId,
+    ]);
+
+    if (subjectsInGroup.length === 0) {
+      res
+        .status(404)
+        .json({ success: false, message: "ไม่พบข้อมูลรายวิชาในกลุ่มนี้" });
+      return;
+    }
+
+    // ดึงชื่อกลุ่มและหน่วยกิตมาจากแถวแรกได้เลย (เพราะมันเหมือนกันทุกแถว)
+    const actualGroupName = subjectsInGroup[0].group_name;
+    const totalGroupCredit = Number(subjectsInGroup[0].total_credit) || 0;
+
+    let totalGroupMaxScore = 0;
+    const subjectNamesList: string[] = [];
+
+    subjectsInGroup.forEach((sub: any, index: number) => {
+      totalGroupMaxScore += Number(sub.max_score) || 0;
+      subjectNamesList.push(
+        `${index + 1}. ${sub.subject_name} (${sub.max_score})`,
+      );
+    });
+
+    // 3. ดึงคะแนนของนักเรียน (JOIN ด้วย group_id แทน)
+    const scoreSql = `
+      SELECT 
+        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
+        SUM(ss.raw_score) AS total_raw_score
+      FROM students st
+      JOIN student_scores ss ON st.id = ss.student_id
+      JOIN subject_batch_settings sbs ON ss.setting_id = sbs.id
+      JOIN subjects sub ON sbs.subject_id = sub.id
+      WHERE sbs.batch_id = ? AND sub.group_id = ?
+      GROUP BY st.id, st.student_code, st.rank_name, st.first_name, st.last_name
+      ORDER BY st.student_code ASC
+    `;
+    const [studentScores]: any = await conn.query(scoreSql, [batchId, groupId]);
+
+    // 4. ตัดเกรดและคำนวณค่าประกอบ
+    const finalResults = studentScores.map((st: any) => {
+      const rawScore = Number(st.total_raw_score) || 0;
+      const percent = (rawScore / totalGroupMaxScore) * 100;
+
+      let assignedGrade = criteria[criteria.length - 1];
+      for (const c of criteria) {
+        if (percent >= Number(c.min_percent)) {
+          assignedGrade = c;
+          break;
+        }
+      }
+
+      const indexValue = totalGroupCredit * Number(assignedGrade.grade_point);
+
+      return {
+        student_id: st.student_id,
+        student_code: st.student_code,
+        full_name: `${st.rank_name} ${st.first_name} ${st.last_name}`,
+        total_raw_score: rawScore.toFixed(2),
+        total_max_score: totalGroupMaxScore,
+        percent: percent.toFixed(2),
+        grade: assignedGrade.grade_name,
+        grade_point: assignedGrade.grade_point,
+        index_value: indexValue.toFixed(2),
+      };
+    });
+
+    // 5. ส่งกลับ
+    res.status(200).json({
+      success: true,
+      summary: {
+        group_name: actualGroupName,
+        total_credit: totalGroupCredit,
+        total_max_score: totalGroupMaxScore,
+        subjects_list_text: subjectNamesList.join(", "),
+      },
+      data: finalResults,
+    });
+  } catch (error) {
+    console.error("Error processing group grades:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลคะแนน" });
   }
 };
