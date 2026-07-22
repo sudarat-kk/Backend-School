@@ -393,7 +393,27 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 1. เพิ่ม sg.group_name ลงใน SQL
+    // 🌟 1. ดึงเกณฑ์การตัดเกรดมาเตรียมไว้ (เหมือน processGroupGrades)
+    let [criteria]: any = await conn.query(
+      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
+       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
+      [batchId],
+    );
+
+    if (criteria.length === 0) {
+      criteria = [
+        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
+        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
+        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
+        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
+        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
+        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
+        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
+        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
+      ];
+    }
+
+    // 2. ดึงข้อมูลวิชาและคะแนน
     const query = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
@@ -419,10 +439,10 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 2. ใช้ Map ในการจัดกลุ่มวิชา (Group) และวิชาย่อย (Subjects)
+    // 3. จัดกลุ่มวิชา
     const groupsMap: any = {};
     const studentsMap: any = {};
-    const masterSubjects: any[] = []; // เก็บวิชาเรียงตามลำดับสำหรับแถวที่ 2
+    const masterSubjects: any[] = [];
     let totalMaxScoreAll = 0;
     let totalCreditAll = 0;
 
@@ -433,14 +453,14 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           groupId: row.group_id,
           groupName: row.group_name || "",
           credit: Number(row.credit) || 0,
-          subjects: [], // เก็บ array ของวิชาย่อย
+          subjects: [],
+          group_max_score: 0, // 👈 เพิ่มตัวแปรเก็บคะแนนเต็มของกลุ่ม
         };
-        totalCreditAll += Number(row.credit) || 0; // บวกหน่วยกิตครั้งเดียวต่อกลุ่ม
+        totalCreditAll += Number(row.credit) || 0;
       }
 
       const group = groupsMap[row.group_id];
 
-      // เช็คว่าวิชาย่อยนี้ถูกเพิ่มเข้ากลุ่มหรือยัง (ป้องกันซ้ำ)
       const isSubjectExist = group.subjects.find(
         (s: any) => s.id === row.subject_id,
       );
@@ -451,8 +471,10 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           max_score: Number(row.max_score) || 0,
         };
         group.subjects.push(newSubject);
-        masterSubjects.push(newSubject); // เก็บใส่อีก array สำหรับ render แถวที่ 2
-        totalMaxScoreAll += Number(row.max_score) || 0;
+        masterSubjects.push(newSubject);
+
+        group.group_max_score += newSubject.max_score; // บวกคะแนนเต็มของกลุ่ม
+        totalMaxScoreAll += newSubject.max_score;
       }
 
       // --- จัดการข้อมูลนักเรียน ---
@@ -465,35 +487,33 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           total_raw_score: 0,
           total_max_score: 0,
           percent: "0.00",
-          grade: "",
-          index_value: 0,
-          subject_scores: {},
+          gpa: "0.00",
+          subject_scores: {}, // เผื่อไว้ใช้
+          group_raw_scores: {}, // 👈 เก็บผลรวมคะแนนดิบแยกตามกลุ่ม
         };
       }
       const student = studentsMap[row.student_id];
 
-      // แมปคะแนนเข้า Object รายวิชา
       if (row.raw_score !== null && row.raw_score !== undefined) {
-        student.subject_scores[row.subject_id] = Number(row.raw_score);
-        student.total_raw_score += Number(row.raw_score);
+        const score = Number(row.raw_score);
+        student.subject_scores[row.subject_id] = score;
+        student.group_raw_scores[row.group_id] =
+          (student.group_raw_scores[row.group_id] || 0) + score;
+        student.total_raw_score += score;
       }
     });
 
-    // 3. แปลงกลุ่มวิชา และสร้าง Label ตามภาพ Excel
     const subjectGroups = Object.values(groupsMap).map((grp: any) => {
-      grp.isSingle = grp.subjects.length === 1; // ถ้ามี 1 วิชา = วิชาเดี่ยว (สีชมพู)
-
-      // สร้างข้อความ Group Name ให้เหมือนใน Excel เป๊ะๆ
+      grp.isSingle = grp.subjects.length === 1;
       if (grp.isSingle) {
         grp.groupName = `${grp.subjects[0].name} ${grp.credit} นก.`;
       } else {
         grp.groupName = `รวม ${grp.subjects.length} วิชา ${grp.credit} นก.`;
       }
-
       return grp;
     });
 
-    // 4. คำนวณร้อยละ
+    // 🌟 4. ตัดเกรดและคำนวณ GPA 🌟
     const data = Object.values(studentsMap).map((student: any) => {
       student.total_max_score = totalMaxScoreAll;
       student.percent =
@@ -501,19 +521,71 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           ? ((student.total_raw_score / totalMaxScoreAll) * 100).toFixed(2)
           : "0.00";
 
-      student.gpa = "0.00";
+      let totalIndexForGPA = 0;
+      let totalCreditForGPA = 0;
+
+      student.group_results = {}; // 👈 กระเป๋าเก็บเกรดและอินเด็กซ์ส่งไป Frontend
+
+      // วนลูปตัดเกรดทีละกลุ่มวิชา
+      Object.values(groupsMap).forEach((grp: any) => {
+        const rawScore = student.group_raw_scores[grp.groupId];
+
+        if (rawScore !== undefined) {
+          // คิด % ของกลุ่มนี้
+          const percent =
+            grp.group_max_score > 0
+              ? (rawScore / grp.group_max_score) * 100
+              : 0;
+
+          // ตัดเกรดเทียบกับ Criteria
+          let assignedGrade = criteria[criteria.length - 1]; // ค่าเริ่มต้นคือตัวต่ำสุด (F)
+          for (const c of criteria) {
+            if (percent >= Number(c.min_percent)) {
+              assignedGrade = c;
+              break;
+            }
+          }
+
+          // คำนวณอินเด็กซ์ (หน่วยกิต x เกรดพอยต์)
+          const indexValue = grp.credit * Number(assignedGrade.grade_point);
+
+          // เก็บผลลัพธ์ใส่ Object เพื่อส่งกลับ
+          student.group_results[grp.groupId] = {
+            grade: assignedGrade.grade_name,
+            index_value: indexValue.toFixed(2),
+            raw_score: rawScore,
+          };
+
+          // บวกสะสมเพื่อคิด GPA รวม (ถ้าไม่ใช่วิชา S/U)
+          if (
+            assignedGrade.grade_name !== "S" &&
+            assignedGrade.grade_name !== "U"
+          ) {
+            totalIndexForGPA += indexValue;
+            totalCreditForGPA += grp.credit;
+          }
+        }
+      });
+
+      // คำนวณ GPA รวม
+      student.gpa =
+        totalCreditForGPA > 0
+          ? (totalIndexForGPA / totalCreditForGPA).toFixed(2)
+          : "0.00";
+
+      // ลบตัวแปรทดเลขทิ้งให้ JSON คลีนๆ
+      delete student.group_raw_scores;
       return student;
     });
 
-    // 5. ส่ง Response
     const response = {
       success: true,
       summary: {
         batch_id: Number(batchId),
         total_credit: totalCreditAll,
         total_max_score: totalMaxScoreAll,
-        subjectGroups: subjectGroups, // ส่งกลุ่มวิชา (สำหรับหัวตารางแถว 1)
-        masterSubjects: masterSubjects, // ส่งวิชาเรียงยาว (สำหรับหัวตารางแถว 2)
+        subjectGroups: subjectGroups,
+        masterSubjects: masterSubjects,
       },
       data: data,
     };
