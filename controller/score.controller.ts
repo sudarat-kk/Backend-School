@@ -393,16 +393,16 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // แก้ไข SQL Query ใหม่ให้ตรงกับ Schema ใน Database จริง
+    // 1. เพิ่ม sg.group_name ลงใน SQL
     const query = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
         sub.id AS subject_id, sub.subject_name,
         sub.group_id, 
+        sg.group_name, 
         sg.credits AS credit, 
         sbs.max_score, 
         sc.raw_score
-        
       FROM students st
       JOIN subject_batch_settings sbs ON st.batch_id = sbs.batch_id
       JOIN subjects sub ON sbs.subject_id = sub.id
@@ -419,31 +419,43 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const summarySubjects: any = {};
+    // 2. ใช้ Map ในการจัดกลุ่มวิชา (Group) และวิชาย่อย (Subjects)
+    const groupsMap: any = {};
     const studentsMap: any = {};
+    const masterSubjects: any[] = []; // เก็บวิชาเรียงตามลำดับสำหรับแถวที่ 2
     let totalMaxScoreAll = 0;
     let totalCreditAll = 0;
-    const countedGroups = new Set();
 
     rows.forEach((row: any) => {
-      // --- จัดการข้อมูลหัวตาราง ---
-      if (!summarySubjects[row.subject_id]) {
-        summarySubjects[row.subject_id] = {
-          subject_id: row.subject_id,
-          subject_name: row.subject_name,
-          max_score: Number(row.max_score) || 0,
+      // --- จัดการข้อมูลหัวตาราง (กลุ่มวิชา) ---
+      if (!groupsMap[row.group_id]) {
+        groupsMap[row.group_id] = {
+          groupId: row.group_id,
+          groupName: row.group_name || "",
+          credit: Number(row.credit) || 0,
+          subjects: [], // เก็บ array ของวิชาย่อย
         };
-
-        totalMaxScoreAll += Number(row.max_score) || 0;
-
-        // 👈 เช็คว่ากลุ่มวิชานี้ ถูกบวกหน่วยกิตไปแล้วหรือยัง
-        if (!countedGroups.has(row.group_id)) {
-          countedGroups.add(row.group_id); // จดบันทึกไว้ว่ากลุ่มนี้คิดหน่วยกิตแล้ว
-          totalCreditAll += Number(row.credit) || 0; // ค่อยบวกเพิ่ม
-        }
+        totalCreditAll += Number(row.credit) || 0; // บวกหน่วยกิตครั้งเดียวต่อกลุ่ม
       }
 
-      // จัดการข้อมูลนักเรียน
+      const group = groupsMap[row.group_id];
+
+      // เช็คว่าวิชาย่อยนี้ถูกเพิ่มเข้ากลุ่มหรือยัง (ป้องกันซ้ำ)
+      const isSubjectExist = group.subjects.find(
+        (s: any) => s.id === row.subject_id,
+      );
+      if (!isSubjectExist) {
+        const newSubject = {
+          id: row.subject_id,
+          name: row.subject_name,
+          max_score: Number(row.max_score) || 0,
+        };
+        group.subjects.push(newSubject);
+        masterSubjects.push(newSubject); // เก็บใส่อีก array สำหรับ render แถวที่ 2
+        totalMaxScoreAll += Number(row.max_score) || 0;
+      }
+
+      // --- จัดการข้อมูลนักเรียน ---
       if (!studentsMap[row.student_id]) {
         studentsMap[row.student_id] = {
           student_id: row.student_id,
@@ -455,7 +467,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           percent: "0.00",
           grade: "",
           index_value: 0,
-          total_credit: 0,
           subject_scores: {},
         };
       }
@@ -465,36 +476,44 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       if (row.raw_score !== null && row.raw_score !== undefined) {
         student.subject_scores[row.subject_id] = Number(row.raw_score);
         student.total_raw_score += Number(row.raw_score);
-        student.total_credit += Number(row.credit) || 0;
       }
     });
 
-    // คำนวณร้อยละ
+    // 3. แปลงกลุ่มวิชา และสร้าง Label ตามภาพ Excel
+    const subjectGroups = Object.values(groupsMap).map((grp: any) => {
+      grp.isSingle = grp.subjects.length === 1; // ถ้ามี 1 วิชา = วิชาเดี่ยว (สีชมพู)
+
+      // สร้างข้อความ Group Name ให้เหมือนใน Excel เป๊ะๆ
+      if (grp.isSingle) {
+        grp.groupName = `${grp.subjects[0].name} ${grp.credit} นก.`;
+      } else {
+        grp.groupName = `รวม ${grp.subjects.length} วิชา ${grp.credit} นก.`;
+      }
+
+      return grp;
+    });
+
+    // 4. คำนวณร้อยละ
     const data = Object.values(studentsMap).map((student: any) => {
       student.total_max_score = totalMaxScoreAll;
-
       student.percent =
         totalMaxScoreAll > 0
           ? ((student.total_raw_score / totalMaxScoreAll) * 100).toFixed(2)
           : "0.00";
 
-      // หมายเหตุ: เนื่องจากใน Database ไม่มีเก็บค่า Index / Grade
-      // หากต้องการแสดงผล GPA ต้องมีการเขียน Logic คำนวณตัดเกรดจาก raw_score เพิ่มเติมตรงนี้นะครับ
       student.gpa = "0.00";
-      student.index_value = "0.00";
-
-      delete student.total_credit;
-
       return student;
     });
 
+    // 5. ส่ง Response
     const response = {
       success: true,
       summary: {
         batch_id: Number(batchId),
         total_credit: totalCreditAll,
         total_max_score: totalMaxScoreAll,
-        subjects: Object.values(summarySubjects),
+        subjectGroups: subjectGroups, // ส่งกลุ่มวิชา (สำหรับหัวตารางแถว 1)
+        masterSubjects: masterSubjects, // ส่งวิชาเรียงยาว (สำหรับหัวตารางแถว 2)
       },
       data: data,
     };
