@@ -3,138 +3,6 @@ import { RowDataPacket } from "mysql2";
 import { conn } from "../dbconn";
 
 // ==========================================
-// 1. บันทึกคะแนนหลายวิชา (ของนักเรียน 1 คน)
-// ==========================================
-export const saveScoresAndCalculate = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
-  const connection = await conn.getConnection();
-  try {
-    const { student_id, batch_id, scores } = req.body;
-    if (!student_id || !batch_id || !scores || !Array.isArray(scores)) {
-      res.status(400).json({ error: "ข้อมูลไม่ครบถ้วนหรือไม่ถูกต้อง" });
-      return;
-    }
-
-    await connection.beginTransaction();
-
-    const insertQuery = `
-            INSERT INTO student_scores (student_id, setting_id, raw_score)
-            VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE raw_score = VALUES(raw_score)
-        `;
-    for (const score of scores) {
-      await connection.execute(insertQuery, [
-        student_id,
-        score.setting_id,
-        score.raw_score,
-      ]);
-    }
-
-    await connection.commit();
-
-    const detailQuery = `
-            SELECT sg.group_name, sub.subject_name, sbs.max_score, COALESCE(ss.raw_score, 0) AS raw_score
-            FROM subject_batch_settings sbs
-            JOIN subjects sub ON sbs.subject_id = sub.id
-            JOIN subject_groups sg ON sub.group_id = sg.id
-            LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
-            WHERE sbs.batch_id = ?
-            ORDER BY sg.id, sub.id;
-        `;
-    const [subjectDetails] = await connection.execute<RowDataPacket[]>(
-      detailQuery,
-      [student_id, batch_id],
-    );
-
-    const summaryQuery = `
-            SELECT sg.group_name, sg.credits, SUM(sbs.max_score) AS group_max_score,
-                   COALESCE(SUM(ss.raw_score), 0) AS group_raw_score,
-                   COALESCE((SUM(ss.raw_score) / SUM(sbs.max_score)) * 100, 0) AS group_percentage
-            FROM subject_groups sg
-            JOIN subjects sub ON sg.id = sub.group_id
-            JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
-            LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
-            WHERE sg.batch_id = ?
-            GROUP BY sg.id;
-        `;
-    const [groupSummaries] = await connection.execute<RowDataPacket[]>(
-      summaryQuery,
-      [student_id, batch_id],
-    );
-
-    res.status(200).json({
-      message: "บันทึกและคำนวณผลสำเร็จ",
-      student_id: student_id,
-      batch_id: batch_id,
-      subject_details: subjectDetails,
-      group_summaries: groupSummaries,
-    });
-  } catch (error) {
-    await connection.rollback();
-    console.error("Error in saveScoresAndCalculate:", error);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
-  } finally {
-    connection.release();
-  }
-};
-
-// ==========================================
-// 2. บันทึกคะแนน 1 วิชา (ของนักเรียน 1 คน)
-// ==========================================
-export const saveSingleScore = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
-  const connection = await conn.getConnection();
-  try {
-    const { student_id, batch_id, setting_id, raw_score } = req.body;
-    if (!student_id || !batch_id || !setting_id || raw_score === undefined) {
-      res.status(400).json({ error: "ข้อมูลไม่ครบถ้วน" });
-      return;
-    }
-
-    await connection.beginTransaction();
-
-    const insertQuery = `
-            INSERT INTO student_scores (student_id, setting_id, raw_score)
-            VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE raw_score = VALUES(raw_score)
-        `;
-    await connection.execute(insertQuery, [student_id, setting_id, raw_score]);
-    await connection.commit();
-
-    const summaryQuery = `
-            SELECT sg.group_name, sg.credits, SUM(sbs.max_score) AS group_max_score,
-                   COALESCE(SUM(ss.raw_score), 0) AS group_raw_score,
-                   COALESCE((SUM(ss.raw_score) / SUM(sbs.max_score)) * 100, 0) AS group_percentage
-            FROM subject_groups sg
-            JOIN subjects sub ON sg.id = sub.group_id
-            JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
-            LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
-            WHERE sg.batch_id = ?
-            GROUP BY sg.id;
-        `;
-    const [groupSummaries] = await connection.execute<RowDataPacket[]>(
-      summaryQuery,
-      [student_id, batch_id],
-    );
-
-    res.status(200).json({
-      message: "บันทึกคะแนนรายวิชาสำเร็จ",
-      updated_summaries: groupSummaries,
-    });
-  } catch (error) {
-    await connection.rollback();
-    console.error("Error saving single score:", error);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
-  } finally {
-    connection.release();
-  }
-};
-
-// ==========================================
 // 3. อัปเดตคะแนนเต็มรายวิชา (Max Score)
 // ==========================================
 export const updateSubjectMaxScore = async (
@@ -363,6 +231,8 @@ export const saveAdminBulkScores = async (
     connection.release();
   }
 };
+
+//ตัดเกรด
 export const processGroupGrades = async (
   req: Request,
   res: Response,
@@ -512,5 +382,128 @@ export const processGroupGrades = async (
     res
       .status(500)
       .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลคะแนน" });
+  }
+};
+
+export const getscore = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const batchId = req.query.batch_id;
+    if (!batchId) {
+      res.status(400).json({ error: "กรุณาระบุ batch_id" });
+      return;
+    }
+
+    // แก้ไข SQL Query ใหม่ให้ตรงกับ Schema ใน Database จริง
+    const query = `
+      SELECT 
+        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
+        sub.id AS subject_id, sub.subject_name,
+        sub.group_id, 
+        sg.credits AS credit, 
+        sbs.max_score, 
+        sc.raw_score
+        
+      FROM students st
+      JOIN subject_batch_settings sbs ON st.batch_id = sbs.batch_id
+      JOIN subjects sub ON sbs.subject_id = sub.id
+      JOIN subject_groups sg ON sub.group_id = sg.id 
+      LEFT JOIN student_scores sc ON st.id = sc.student_id AND sbs.id = sc.setting_id 
+      WHERE st.batch_id = ?
+      ORDER BY st.student_code ASC, sub.id ASC
+    `;
+
+    const [rows]: any = await conn.query(query, [batchId]);
+
+    if (rows.length === 0) {
+      res.json({ success: true, summary: {}, data: [] });
+      return;
+    }
+
+    const summarySubjects: any = {};
+    const studentsMap: any = {};
+    let totalMaxScoreAll = 0;
+    let totalCreditAll = 0;
+    const countedGroups = new Set();
+
+    rows.forEach((row: any) => {
+      // --- จัดการข้อมูลหัวตาราง ---
+      if (!summarySubjects[row.subject_id]) {
+        summarySubjects[row.subject_id] = {
+          subject_id: row.subject_id,
+          subject_name: row.subject_name,
+          max_score: Number(row.max_score) || 0,
+        };
+
+        totalMaxScoreAll += Number(row.max_score) || 0;
+
+        // 👈 เช็คว่ากลุ่มวิชานี้ ถูกบวกหน่วยกิตไปแล้วหรือยัง
+        if (!countedGroups.has(row.group_id)) {
+          countedGroups.add(row.group_id); // จดบันทึกไว้ว่ากลุ่มนี้คิดหน่วยกิตแล้ว
+          totalCreditAll += Number(row.credit) || 0; // ค่อยบวกเพิ่ม
+        }
+      }
+
+      // จัดการข้อมูลนักเรียน
+      if (!studentsMap[row.student_id]) {
+        studentsMap[row.student_id] = {
+          student_id: row.student_id,
+          student_code: row.student_code,
+          full_name:
+            `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
+          total_raw_score: 0,
+          total_max_score: 0,
+          percent: "0.00",
+          grade: "",
+          index_value: 0,
+          total_credit: 0,
+          subject_scores: {},
+        };
+      }
+      const student = studentsMap[row.student_id];
+
+      // แมปคะแนนเข้า Object รายวิชา
+      if (row.raw_score !== null && row.raw_score !== undefined) {
+        student.subject_scores[row.subject_id] = Number(row.raw_score);
+        student.total_raw_score += Number(row.raw_score);
+        student.total_credit += Number(row.credit) || 0;
+      }
+    });
+
+    // คำนวณร้อยละ
+    const data = Object.values(studentsMap).map((student: any) => {
+      student.total_max_score = totalMaxScoreAll;
+
+      student.percent =
+        totalMaxScoreAll > 0
+          ? ((student.total_raw_score / totalMaxScoreAll) * 100).toFixed(2)
+          : "0.00";
+
+      // หมายเหตุ: เนื่องจากใน Database ไม่มีเก็บค่า Index / Grade
+      // หากต้องการแสดงผล GPA ต้องมีการเขียน Logic คำนวณตัดเกรดจาก raw_score เพิ่มเติมตรงนี้นะครับ
+      student.gpa = "0.00";
+      student.index_value = "0.00";
+
+      delete student.total_credit;
+
+      return student;
+    });
+
+    const response = {
+      success: true,
+      summary: {
+        batch_id: Number(batchId),
+        total_credit: totalCreditAll,
+        total_max_score: totalMaxScoreAll,
+        subjects: Object.values(summarySubjects),
+      },
+      data: data,
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error("Error fetching batch score:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลข้อมูล" });
   }
 };
