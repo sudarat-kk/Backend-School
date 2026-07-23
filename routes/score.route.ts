@@ -5,6 +5,7 @@ import {
   getStudentScores,
   processGroupGrades,
   saveAdminBulkScores,
+  saveBatchScores,
   updateSubjectMaxScore,
 } from "../controller/score.controller";
 import { verifyToken } from "../middleware/auth.middleware";
@@ -17,4 +18,6 @@ router.get("/admin/scores", getAdminSubjectScores);
 router.post("/admin/scores/bulk", saveAdminBulkScores);
 router.get("/score/process-group", processGroupGrades);
 router.get("/score/process-batch", getscore);
+router.post("/scores/special-bulk", saveBatchScores);
+
 export default router;

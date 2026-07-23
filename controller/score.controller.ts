@@ -598,3 +598,68 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลข้อมูล" });
   }
 };
+export const saveBatchScores = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { batch_id, scores } = req.body;
+
+    // --- Validate ข้อมูลเบื้องต้น ---
+    if (!batch_id || !Array.isArray(scores)) {
+      res.status(400).json({
+        success: false,
+        message: "รูปแบบข้อมูลไม่ถูกต้อง กรุณาส่ง batch_id และ scores (Array)",
+      });
+      return;
+    }
+
+    if (scores.length === 0) {
+      res.status(200).json({
+        success: true,
+        message: "ไม่มีข้อมูลนักเรียนให้บันทึก",
+      });
+      return;
+    }
+
+    // --- เตรียมข้อมูลสำหรับ Bulk Insert ---
+    // ใส่ type ให้ student เพื่อป้องกัน TS Error
+    const values = scores.map((student: any) => [
+      batch_id,
+      student.student_id,
+      student.training_time_score || 0,
+      student.exam_time_score || 0,
+      student.behavior_score || 0,
+    ]);
+
+    // --- คำสั่ง SQL (Upsert) ---
+    const sql = `
+            INSERT INTO student_summary_scores 
+            (batch_id, student_id, training_time_score, exam_time_score, behavior_score)
+            VALUES ?
+            ON DUPLICATE KEY UPDATE 
+            training_time_score = VALUES(training_time_score),
+            exam_time_score = VALUES(exam_time_score),
+            behavior_score = VALUES(behavior_score)
+        `;
+
+    // --- สั่งรัน Query ---
+    // กำหนด Type เป็น : any ให้ผลลัพธ์เพื่ออ่านค่า affectedRows ได้
+    const [result]: any = await conn.query(sql, [values]);
+
+    // ส่ง Response
+    res.status(200).json({
+      success: true,
+      message: "บันทึกข้อมูลคะแนนเรียบร้อยแล้ว",
+      affectedRows: result.affectedRows,
+    });
+  } catch (error: any) {
+    // ใช้ any เพื่อให้อ่าน error.message ได้
+    console.error("Error saving scores:", error);
+    res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล",
+      error: error.message,
+    });
+  }
+};
