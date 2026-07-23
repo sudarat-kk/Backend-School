@@ -393,7 +393,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 🌟 1. ดึงเกณฑ์การตัดเกรดมาเตรียมไว้ (เหมือน processGroupGrades)
+    // 1. ดึงเกณฑ์การตัดเกรดมาเตรียมไว้
     let [criteria]: any = await conn.query(
       `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
        WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
@@ -413,7 +413,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       ];
     }
 
-    // 2. ดึงข้อมูลวิชาและคะแนน
+    // 🌟 2. ดึงข้อมูลวิชา คะแนนรายวิชา และ "คะแนนพิเศษ 3 ก้อน" 🌟
     const query = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
@@ -422,12 +422,18 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         sg.group_name, 
         sg.credits AS credit, 
         sbs.max_score, 
-        sc.raw_score
+        sc.raw_score,
+        -- ดึงคะแนนพิเศษ 3 ตัวมาจาก student_summary_scores
+        sss.training_time_score,
+        sss.exam_time_score,
+        sss.behavior_score
       FROM students st
       JOIN subject_batch_settings sbs ON st.batch_id = sbs.batch_id
       JOIN subjects sub ON sbs.subject_id = sub.id
       JOIN subject_groups sg ON sub.group_id = sg.id 
       LEFT JOIN student_scores sc ON st.id = sc.student_id AND sbs.id = sc.setting_id 
+      -- เพิ่ม JOIN ตารางสรุปคะแนน
+      LEFT JOIN student_summary_scores sss ON st.id = sss.student_id AND st.batch_id = sss.batch_id
       WHERE st.batch_id = ?
       ORDER BY st.student_code ASC, sub.id ASC
     `;
@@ -454,7 +460,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           groupName: row.group_name || "",
           credit: Number(row.credit) || 0,
           subjects: [],
-          group_max_score: 0, // 👈 เพิ่มตัวแปรเก็บคะแนนเต็มของกลุ่ม
+          group_max_score: 0,
         };
         totalCreditAll += Number(row.credit) || 0;
       }
@@ -472,12 +478,11 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         };
         group.subjects.push(newSubject);
         masterSubjects.push(newSubject);
-
-        group.group_max_score += newSubject.max_score; // บวกคะแนนเต็มของกลุ่ม
+        group.group_max_score += newSubject.max_score;
         totalMaxScoreAll += newSubject.max_score;
       }
 
-      // --- จัดการข้อมูลนักเรียน ---
+      // --- 🌟 จัดการข้อมูลนักเรียน (เพิ่มคะแนนพิเศษ 3 ก้อนเข้าไปที่นี่) 🌟 ---
       if (!studentsMap[row.student_id]) {
         studentsMap[row.student_id] = {
           student_id: row.student_id,
@@ -488,10 +493,15 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           total_max_score: 0,
           percent: "0.00",
           gpa: "0.00",
-          subject_scores: {}, // เผื่อไว้ใช้
-          group_raw_scores: {}, // 👈 เก็บผลรวมคะแนนดิบแยกตามกลุ่ม
+          subject_scores: {},
+          group_raw_scores: {},
+          // แมปคะแนนทั้ง 3 ตัวส่งกลับไป ถ้าเป็น null (ยังไม่เคยบันทึก) ให้เป็น 0
+          training_time_score: Number(row.training_time_score) || 0,
+          exam_time_score: Number(row.exam_time_score) || 0,
+          behavior_score: Number(row.behavior_score) || 0,
         };
       }
+
       const student = studentsMap[row.student_id];
 
       if (row.raw_score !== null && row.raw_score !== undefined) {
@@ -513,7 +523,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return grp;
     });
 
-    // 🌟 4. ตัดเกรดและคำนวณ GPA 🌟
+    // 4. ตัดเกรดและคำนวณ GPA
     const data = Object.values(studentsMap).map((student: any) => {
       student.total_max_score = totalMaxScoreAll;
       student.percent =
@@ -523,22 +533,17 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
 
       let totalIndexForGPA = 0;
       let totalCreditForGPA = 0;
+      student.group_results = {};
 
-      student.group_results = {}; // 👈 กระเป๋าเก็บเกรดและอินเด็กซ์ส่งไป Frontend
-
-      // วนลูปตัดเกรดทีละกลุ่มวิชา
       Object.values(groupsMap).forEach((grp: any) => {
         const rawScore = student.group_raw_scores[grp.groupId];
-
         if (rawScore !== undefined) {
-          // คิด % ของกลุ่มนี้
           const percent =
             grp.group_max_score > 0
               ? (rawScore / grp.group_max_score) * 100
               : 0;
 
-          // ตัดเกรดเทียบกับ Criteria
-          let assignedGrade = criteria[criteria.length - 1]; // ค่าเริ่มต้นคือตัวต่ำสุด (F)
+          let assignedGrade = criteria[criteria.length - 1];
           for (const c of criteria) {
             if (percent >= Number(c.min_percent)) {
               assignedGrade = c;
@@ -546,17 +551,13 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
             }
           }
 
-          // คำนวณอินเด็กซ์ (หน่วยกิต x เกรดพอยต์)
           const indexValue = grp.credit * Number(assignedGrade.grade_point);
-
-          // เก็บผลลัพธ์ใส่ Object เพื่อส่งกลับ
           student.group_results[grp.groupId] = {
             grade: assignedGrade.grade_name,
             index_value: indexValue.toFixed(2),
             raw_score: rawScore,
           };
 
-          // บวกสะสมเพื่อคิด GPA รวม (ถ้าไม่ใช่วิชา S/U)
           if (
             assignedGrade.grade_name !== "S" &&
             assignedGrade.grade_name !== "U"
@@ -567,18 +568,15 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         }
       });
 
-      // คำนวณ GPA รวม
       student.gpa =
         totalCreditForGPA > 0
           ? (totalIndexForGPA / totalCreditForGPA).toFixed(2)
           : "0.00";
-
-      // ลบตัวแปรทดเลขทิ้งให้ JSON คลีนๆ
-      delete student.group_raw_scores;
+      delete student.group_raw_scores; // ลบตัวแปรทดเลขทิ้ง
       return student;
     });
 
-    const response = {
+    res.json({
       success: true,
       summary: {
         batch_id: Number(batchId),
@@ -588,9 +586,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         masterSubjects: masterSubjects,
       },
       data: data,
-    };
-
-    res.json(response);
+    });
   } catch (error) {
     console.error("Error fetching batch score:", error);
     res
