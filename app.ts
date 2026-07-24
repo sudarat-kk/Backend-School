@@ -4,6 +4,7 @@ import courseRoutes from "./routes/course.route";
 import authRoutes from "./routes/auth.route"; // Import routes สำหรับ auth]
 import scoreRoutes from "./routes/score.route"; // Import routes สำหรับ score
 import dropdownRoutes from "./routes/dropdown.route"; // Import routes สำหรับ dropdown
+import studentRoute from "./routes/student.route";
 const app = express();
 
 // 2. เรียกใช้ middleware cors ก่อนที่จะเรียก routes
@@ -18,4 +19,5 @@ app.use("/api", courseRoutes);
 app.use("/api", authRoutes); // ถ้าคุณมี route สำหรับ auth
 app.use("/api", scoreRoutes); // เพิ่ม route สำหรับ score
 app.use("/api", dropdownRoutes); // เพิ่ม route สำหรับ dropdown
+app.use("/api", studentRoute);
 export default app;
