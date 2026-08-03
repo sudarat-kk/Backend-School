@@ -69,28 +69,3 @@ export const getSubjectsByBatch = async (
     });
   }
 };
-
-export const getGeneralEvaluation = async (
-  req: Request,
-  res: Response,
-): Promise<Response> => {
-  const { batchId } = req.params;
-  const { type } = req.query;
-
-  try {
-    const sql = `SELECT form_url FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1 LIMIT 1;`;
-    const [rows]: any = await conn.query(sql, [batchId, type]);
-
-    if (rows.length === 0) {
-      return res.status(200).json({ success: true, data: [] });
-    }
-
-    // ส่งแค่ Array ที่มี form_url
-    return res.status(200).json({
-      success: true,
-      data: [{ form_url: rows[0].form_url }],
-    });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: "Error" });
-  }
-};
