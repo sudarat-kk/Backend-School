@@ -50,23 +50,26 @@ export const getGeneralEvaluation = async (
   }
 };
 
-// 1. สร้างฟอร์มประเมินใหม่
+// สร้างฟอร์มประเมินใหม่
 export const createEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  // รับข้อมูลจาก Frontend (ตัด criteria ออก)
-  const { formType, googleFormUrl, formName, generationId } = req.body;
+  // เพิ่ม subjectId ที่แนบมาจาก Frontend
+  const { formType, googleFormUrl, formName, generationId, subjectId } =
+    req.body;
 
   try {
     const sql = `
       INSERT INTO evaluation_forms 
-      (batch_id, evaluation_type, form_url, form_name, is_active, created_at, updated_at) 
-      VALUES (?, ?, ?, ?, 1, NOW(), NOW())
+      (batch_id, subject_id, evaluation_type, form_url, form_name, is_active, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())
     `;
 
+    // ใส่ subjectId ลงใน array ของ query parameters
     const [result]: any = await conn.query(sql, [
       generationId || null,
+      subjectId || null, // บันทึก subjectId (ถ้าไม่ได้เลือกจะเก็บเป็น null)
       formType,
       googleFormUrl,
       formName,
@@ -85,23 +88,27 @@ export const createEvaluation = async (
   }
 };
 
-// 2. อัปเดตข้อมูลฟอร์มประเมิน
+// อัปเดตข้อมูลฟอร์มประเมิน
 export const updateEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
   const { id } = req.params;
-  const { formType, googleFormUrl, formName, generationId } = req.body; // ตัด criteria ออก
+  // เพิ่ม subjectId ที่แนบมาจาก Frontend
+  const { formType, googleFormUrl, formName, generationId, subjectId } =
+    req.body;
 
   try {
     const sql = `
       UPDATE evaluation_forms 
-      SET batch_id = ?, evaluation_type = ?, form_url = ?, form_name = ?, updated_at = NOW() 
+      SET batch_id = ?, subject_id = ?, evaluation_type = ?, form_url = ?, form_name = ?, updated_at = NOW() 
       WHERE id = ?
     `;
 
+    // อัปเดต subjectId ด้วย
     const [result]: any = await conn.query(sql, [
       generationId || null,
+      subjectId || null,
       formType,
       googleFormUrl,
       formName,
