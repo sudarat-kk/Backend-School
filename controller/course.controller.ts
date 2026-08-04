@@ -69,3 +69,33 @@ export const getGroupedCourses = async (
     });
   }
 };
+export const addCourse = async (req: Request, res: Response) => {
+  const { course_name, curriculum_year } = req.body;
+  try {
+    const [result] = await conn.query(
+      "INSERT INTO courses (course_name, curriculum_year) VALUES (?, ?)",
+      [course_name, curriculum_year],
+    );
+    res.status(201).json({ success: true, message: "เพิ่มหลักสูตรสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกหลักสูตร" });
+  }
+};
+export const addBatch = async (req: Request, res: Response) => {
+  const { course_id, batch_name, start_date, end_date } = req.body;
+  try {
+    const [result] = await conn.query(
+      "INSERT INTO course_batches (course_id, batch_name, start_date, end_date) VALUES (?, ?, ?, ?)",
+      [course_id, batch_name, start_date || null, end_date || null],
+    );
+    res.status(201).json({ success: true, message: "เพิ่มรุ่นสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกรุ่น" });
+  }
+};

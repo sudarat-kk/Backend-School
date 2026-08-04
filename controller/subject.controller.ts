@@ -69,3 +69,35 @@ export const getSubjectsByBatch = async (
     });
   }
 };
+
+export const addSubjectGroup = async (req: Request, res: Response) => {
+  const { batch_id, group_name, credits } = req.body;
+  try {
+    const [result] = await conn.query(
+      "INSERT INTO subject_groups (batch_id, group_name, credits) VALUES (?, ?, ?)",
+      [batch_id, group_name, credits],
+    );
+    res.status(201).json({ success: true, message: "เพิ่มกลุ่มวิชาสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกกลุ่มวิชา" });
+  }
+};
+
+export const addSubject = async (req: Request, res: Response) => {
+  const { group_id, subject_name } = req.body;
+  try {
+    const [result] = await conn.query(
+      "INSERT INTO subjects (group_id, subject_name) VALUES (?, ?)",
+      [group_id, subject_name],
+    );
+    res.status(201).json({ success: true, message: "เพิ่มรายวิชาสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกรายวิชา" });
+  }
+};
