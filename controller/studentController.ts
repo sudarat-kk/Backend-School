@@ -100,19 +100,97 @@ export const getStudents = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
+  const batch_id = req.query.batch_id; // รับค่า batch_id ที่ Frontend ส่งมา
+
   let connection;
   try {
     connection = await conn.getConnection();
-    const query = `
-            SELECT * FROM students
-        `;
-    const [rows] = await connection.execute(query);
+
+    let query = `SELECT * FROM students`;
+    let params: any[] = [];
+
+    // ถ้ามีการเลือกรุ่นมา ให้กรองเฉพาะนักเรียนในรุ่นนั้น
+    if (batch_id) {
+      query += ` WHERE batch_id = ?`;
+      params.push(batch_id);
+    }
+
+    const [rows] = await connection.execute(query, params);
     return res.status(200).json(rows);
   } catch (error) {
     console.error(error);
     return res
       .status(500)
       .json({ message: "เกิดข้อผิดพลาดในการดึงข้อมูลนักเรียน" });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
+export const addStudent = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  // รับข้อมูลจากฟอร์มกรอกทีละคน (อ้างอิงฟิลด์จาก UI)
+  const {
+    batch_id, // จำเป็นต้องส่งมาจาก Frontend ด้วยเพื่อระบุรุ่น
+    rank_name,
+    first_name,
+    last_name,
+    student_code,
+    password,
+    affiliation,
+  } = req.body;
+
+  // ตรวจสอบว่ามีการส่งข้อมูลที่จำเป็นมาครบหรือไม่
+  if (!batch_id || !student_code || !first_name) {
+    return res
+      .status(400)
+      .json({
+        message:
+          "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (รุ่น, รหัสประจำตัว, ชื่อ)",
+      });
+  }
+
+  let connection;
+  try {
+    connection = await conn.getConnection();
+
+    const query = `
+      INSERT INTO students 
+      (batch_id, student_code, password, rank_name, first_name, last_name, affiliation) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    // หากไม่ได้กรอกรหัสผ่าน ให้ตั้งค่าเริ่มต้นเป็น "1234" ตามที่เคยทำในอัปโหลด CSV
+    const defaultPassword = password || "1234";
+
+    await connection.execute(query, [
+      batch_id,
+      student_code,
+      defaultPassword,
+      rank_name || "",
+      first_name,
+      last_name || "",
+      affiliation || "",
+    ]);
+
+    return res.status(201).json({ message: "เพิ่มข้อมูลนักเรียนสำเร็จ" });
+  } catch (error: any) {
+    console.error(error);
+
+    // ดักจับกรณีรหัสประจำตัวนักเรียนซ้ำ (Duplicate Entry) ในฐานข้อมูล
+    if (error.code === "ER_DUP_ENTRY") {
+      return res
+        .status(409)
+        .json({ message: "รหัสประจำตัวนักเรียนนี้มีอยู่ในระบบแล้ว" });
+    }
+
+    return res
+      .status(500)
+      .json({ message: "เกิดข้อผิดพลาดในการเพิ่มข้อมูลนักเรียน" });
   } finally {
     if (connection) {
       connection.release();

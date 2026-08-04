@@ -1,6 +1,10 @@
 import express from "express";
 import multer from "multer";
-import { getStudents, uploadStudent } from "../controller/studentController";
+import {
+  addStudent,
+  getStudents,
+  uploadStudent,
+} from "../controller/studentController";
 
 const router = express.Router();
 
@@ -11,4 +15,6 @@ const upload = multer({ dest: "uploads/" });
 // ชื่อ 'csvFile' ตรงนี้จะต้องตรงกับชื่อฟิลด์ FormData ที่ส่งมาจาก Angular (formData.append('csvFile', ...))
 router.post("/students/upload", upload.single("csvFile"), uploadStudent);
 router.get("/students", getStudents);
+router.post("/students/add", addStudent);
+
 export default router;
