@@ -146,12 +146,9 @@ export const addStudent = async (
 
   // ตรวจสอบว่ามีการส่งข้อมูลที่จำเป็นมาครบหรือไม่
   if (!batch_id || !student_code || !first_name) {
-    return res
-      .status(400)
-      .json({
-        message:
-          "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (รุ่น, รหัสประจำตัว, ชื่อ)",
-      });
+    return res.status(400).json({
+      message: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (รุ่น, รหัสประจำตัว, ชื่อ)",
+    });
   }
 
   let connection;
@@ -191,6 +188,112 @@ export const addStudent = async (
     return res
       .status(500)
       .json({ message: "เกิดข้อผิดพลาดในการเพิ่มข้อมูลนักเรียน" });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+export const updateStudent = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  const { id } = req.params; // รับ ID จาก URL Parameter (เช่น /students/1)
+  const {
+    rank_name,
+    first_name,
+    last_name,
+    student_code,
+    password,
+    affiliation,
+  } = req.body;
+
+  if (!id) {
+    return res
+      .status(400)
+      .json({ message: "กรุณาระบุ ID ของนักเรียนที่ต้องการแก้ไข" });
+  }
+
+  let connection;
+  try {
+    connection = await conn.getConnection();
+
+    const query = `
+      UPDATE students 
+      SET 
+        rank_name = ?, 
+        first_name = ?, 
+        last_name = ?, 
+        student_code = ?, 
+        password = ?, 
+        affiliation = ?
+      WHERE id = ?
+    `;
+
+    const [result]: any = await connection.execute(query, [
+      rank_name || "",
+      first_name,
+      last_name || "",
+      student_code,
+      password,
+      affiliation || "",
+      id,
+    ]);
+
+    // เช็คว่ามีข้อมูลถูกอัปเดตจริงๆ หรือไม่
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการแก้ไข" });
+    }
+
+    return res.status(200).json({ message: "อัปเดตข้อมูลนักเรียนสำเร็จ" });
+  } catch (error: any) {
+    console.error(error);
+
+    // ดัก Error กรณีแก้รหัสนักเรียนไปซ้ำกับคนอื่น
+    if (error.code === "ER_DUP_ENTRY") {
+      return res
+        .status(409)
+        .json({ message: "รหัสประจำตัวนักเรียนนี้มีซ้ำอยู่ในระบบแล้ว" });
+    }
+
+    return res.status(500).json({ message: "เกิดข้อผิดพลาดในการอัปเดตข้อมูล" });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+export const deleteStudent = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  const { id } = req.params; // รับ ID จาก URL Parameter
+
+  if (!id) {
+    return res
+      .status(400)
+      .json({ message: "กรุณาระบุ ID ของนักเรียนที่ต้องการลบ" });
+  }
+
+  let connection;
+  try {
+    connection = await conn.getConnection();
+
+    const query = `DELETE FROM students WHERE id = ?`;
+    const [result]: any = await connection.execute(query, [id]);
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
+    }
+
+    return res.status(200).json({ message: "ลบข้อมูลนักเรียนสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "เกิดข้อผิดพลาดในการลบข้อมูล" });
   } finally {
     if (connection) {
       connection.release();

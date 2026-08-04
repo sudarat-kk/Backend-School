@@ -2,7 +2,9 @@ import express from "express";
 import multer from "multer";
 import {
   addStudent,
+  deleteStudent,
   getStudents,
+  updateStudent,
   uploadStudent,
 } from "../controller/studentController";
 
@@ -16,5 +18,7 @@ const upload = multer({ dest: "uploads/" });
 router.post("/students/upload", upload.single("csvFile"), uploadStudent);
 router.get("/students", getStudents);
 router.post("/students/add", addStudent);
+router.put("/students/:id", updateStudent);
+router.delete("/students/:id", deleteStudent);
 
 export default router;
