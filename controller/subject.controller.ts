@@ -101,3 +101,15 @@ export const addSubject = async (req: Request, res: Response) => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกรายวิชา" });
   }
 };
+// ดึงกลุ่มวิชาทั้งหมด
+export const getAllSubjectGroups = async (req: Request, res: Response) => {
+  try {
+    const [groups] = await conn.query(
+      "SELECT * FROM subject_groups ORDER BY id DESC",
+    );
+    res.json({ success: true, data: groups });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาด" });
+  }
+};

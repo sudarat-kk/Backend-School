@@ -99,3 +99,28 @@ export const addBatch = async (req: Request, res: Response) => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกรุ่น" });
   }
 };
+// ดึงหลักสูตรทั้งหมด
+export const getAllCourses = async (req: Request, res: Response) => {
+  try {
+    const [courses] = await conn.query(
+      "SELECT * FROM courses ORDER BY id DESC",
+    );
+    res.json({ success: true, data: courses });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาด" });
+  }
+};
+
+// ดึงรุ่นทั้งหมด
+export const getAllBatches = async (req: Request, res: Response) => {
+  try {
+    const [batches] = await conn.query(
+      "SELECT * FROM course_batches ORDER BY id DESC",
+    );
+    res.json({ success: true, data: batches });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาด" });
+  }
+};
