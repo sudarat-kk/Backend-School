@@ -10,28 +10,40 @@ export const updateSubjectMaxScore = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { setting_id, max_score } = req.body;
-    if (!setting_id || max_score === undefined) {
+    // เปลี่ยนมารับ batch_id และ subject_id แทน setting_id
+    const { batch_id, subject_id, max_score } = req.body;
+
+    if (!batch_id || !subject_id || max_score === undefined) {
       res
         .status(400)
-        .json({ error: "กรุณาระบุ setting_id และ max_score ให้ครบถ้วน" });
+        .json({
+          error: "กรุณาระบุ batch_id, subject_id และ max_score ให้ครบถ้วน",
+        });
       return;
     }
 
-    const updateQuery = `UPDATE subject_batch_settings SET max_score = ? WHERE id = ?`;
+    // อัปเดตโดยใช้เงื่อนไขที่รัดกุมขึ้น
+    const updateQuery = `UPDATE subject_batch_settings SET max_score = ? WHERE batch_id = ? AND subject_id = ?`;
     const [result]: any = await conn.execute(updateQuery, [
       max_score,
-      setting_id,
+      batch_id,
+      subject_id,
     ]);
 
     if (result.affectedRows === 0) {
-      res.status(404).json({ error: "ไม่พบรายวิชาที่ต้องการอัปเดต" });
+      res
+        .status(404)
+        .json({
+          error:
+            "ไม่พบรายวิชาหรือรุ่นที่ต้องการอัปเดต (อาจยังไม่มีการตั้งค่าข้อมูลสำหรับวิชานี้ในตาราง)",
+        });
       return;
     }
 
     res.status(200).json({
       message: "อัปเดตคะแนนเต็มสำเร็จ",
-      setting_id: setting_id,
+      batch_id: batch_id,
+      subject_id: subject_id,
       new_max_score: max_score,
     });
   } catch (error) {
