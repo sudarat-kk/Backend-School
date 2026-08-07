@@ -198,37 +198,25 @@ export const getEvaluationQuestions = async (
   res: Response,
 ): Promise<Response | void> => {
   const { batchId } = req.params;
-  const { type, subjectId } = req.query;
-
+  const { type } = req.query;
   try {
-    // 1. หา form_id ก่อน
-    let sqlForm = `SELECT * FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1`;
+    // 1. หา form_id โดยดึงฟอร์มล่าสุดของรุ่น และประเภทนั้นๆ (ไม่สนวิชาแล้ว)
+    let sqlForm = `SELECT * FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1 ORDER BY id DESC LIMIT 1`;
     let queryParams: any[] = [batchId, type];
-
-    // ถ้าเป็นแบบประเมินอาจารย์ ต้องเจาะจงวิชาด้วย
-    if (type === "instructor" && subjectId) {
-      sqlForm += ` AND subject_id = ?`;
-      queryParams.push(subjectId);
-    }
-
-    sqlForm += ` ORDER BY id DESC LIMIT 1`; // เอาฟอร์มล่าสุด
 
     const [forms]: any = await conn.query(sqlForm, queryParams);
 
     if (forms.length === 0) {
       return res
         .status(404)
-        .json({ success: false, message: "ไม่พบแบบประเมินสำหรับวิชานี้" });
+        .json({ success: false, message: "ไม่พบแบบประเมินสำหรับรุ่นนี้" });
     }
-
     const form = forms[0];
-
     // 2. ดึงคำถามทั้งหมดของฟอร์มนี้
     const [questions]: any = await conn.query(
       `SELECT * FROM evaluation_questions WHERE form_id = ? ORDER BY order_num ASC`,
       [form.id],
     );
-
     // 3. ดึงตัวเลือกทั้งหมดของคำถามแต่ละข้อ
     for (let q of questions) {
       if (q.question_type === "choice") {
@@ -239,7 +227,6 @@ export const getEvaluationQuestions = async (
         q.choices = choices;
       }
     }
-
     return res.status(200).json({
       success: true,
       data: {
@@ -256,7 +243,6 @@ export const getEvaluationQuestions = async (
       .json({ success: false, message: "Internal Server Error" });
   }
 };
-
 // 2. บันทึกคำตอบที่นักเรียนส่งมา (POST)
 export const submitEvaluationAnswer = async (
   req: Request,
@@ -267,12 +253,9 @@ export const submitEvaluationAnswer = async (
   // เนื่องจาก Database ของคุณบังคับให้ student_id ห้ามว่าง (NOT NULL)
   // แต่โจทย์คือนักเรียนไม่ต้องกรอกรหัส เราเลยสุ่มรหัสใส่ให้ชั่วคราวเพื่อไม่ให้ Database ฟ้อง Error
   const dummyStudentId = "STD-" + Date.now().toString().slice(-6);
-
   const connection = await conn.getConnection();
-
   try {
     await connection.beginTransaction();
-
     // 1. บันทึกใบเสร็จ (evaluation_submissions)
     const sqlSubmission = `
       INSERT INTO evaluation_submissions (student_id, form_id, subject_id, instructor_name, created_at)
@@ -284,9 +267,7 @@ export const submitEvaluationAnswer = async (
       subjectId || null,
       instructorName || "ไม่ระบุ",
     ]);
-
     const submissionId = subResult.insertId;
-
     // 2. วนลูปบันทึกคำตอบ (evaluation_answers)
     for (let ans of answers) {
       const sqlAnswer = `
@@ -301,7 +282,6 @@ export const submitEvaluationAnswer = async (
         ans.comment || null,
       ]);
     }
-
     await connection.commit();
     return res
       .status(201)
