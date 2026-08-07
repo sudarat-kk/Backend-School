@@ -187,3 +187,132 @@ export const updateEvaluation = async (
       .json({ success: false, message: "Internal Server Error" });
   }
 };
+
+// ==========================================
+// ส่วนที่ต้องเพิ่มใหม่ สำหรับฝั่งนักเรียน
+// ==========================================
+
+// 1. ดึงข้อมูลฟอร์มพร้อมชุดคำถามและตัวเลือก (GET)
+export const getEvaluationQuestions = async (
+  req: Request,
+  res: Response,
+): Promise<Response | void> => {
+  const { batchId } = req.params;
+  const { type, subjectId } = req.query;
+
+  try {
+    // 1. หา form_id ก่อน
+    let sqlForm = `SELECT * FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1`;
+    let queryParams: any[] = [batchId, type];
+
+    // ถ้าเป็นแบบประเมินอาจารย์ ต้องเจาะจงวิชาด้วย
+    if (type === "instructor" && subjectId) {
+      sqlForm += ` AND subject_id = ?`;
+      queryParams.push(subjectId);
+    }
+
+    sqlForm += ` ORDER BY id DESC LIMIT 1`; // เอาฟอร์มล่าสุด
+
+    const [forms]: any = await conn.query(sqlForm, queryParams);
+
+    if (forms.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "ไม่พบแบบประเมินสำหรับวิชานี้" });
+    }
+
+    const form = forms[0];
+
+    // 2. ดึงคำถามทั้งหมดของฟอร์มนี้
+    const [questions]: any = await conn.query(
+      `SELECT * FROM evaluation_questions WHERE form_id = ? ORDER BY order_num ASC`,
+      [form.id],
+    );
+
+    // 3. ดึงตัวเลือกทั้งหมดของคำถามแต่ละข้อ
+    for (let q of questions) {
+      if (q.question_type === "choice") {
+        const [choices]: any = await conn.query(
+          `SELECT * FROM evaluation_choices WHERE question_id = ? ORDER BY order_num ASC`,
+          [q.id],
+        );
+        q.choices = choices;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        form_id: form.id,
+        form_name: form.form_name,
+        evaluation_type: form.evaluation_type,
+        questions: questions,
+      },
+    });
+  } catch (error: any) {
+    console.error("Error getEvaluationQuestions:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// 2. บันทึกคำตอบที่นักเรียนส่งมา (POST)
+export const submitEvaluationAnswer = async (
+  req: Request,
+  res: Response,
+): Promise<Response | void> => {
+  const { formId, subjectId, instructorName, answers } = req.body;
+
+  // เนื่องจาก Database ของคุณบังคับให้ student_id ห้ามว่าง (NOT NULL)
+  // แต่โจทย์คือนักเรียนไม่ต้องกรอกรหัส เราเลยสุ่มรหัสใส่ให้ชั่วคราวเพื่อไม่ให้ Database ฟ้อง Error
+  const dummyStudentId = "STD-" + Date.now().toString().slice(-6);
+
+  const connection = await conn.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. บันทึกใบเสร็จ (evaluation_submissions)
+    const sqlSubmission = `
+      INSERT INTO evaluation_submissions (student_id, form_id, subject_id, instructor_name, created_at)
+      VALUES (?, ?, ?, ?, NOW())
+    `;
+    const [subResult]: any = await connection.query(sqlSubmission, [
+      dummyStudentId,
+      formId,
+      subjectId || null,
+      instructorName || "ไม่ระบุ",
+    ]);
+
+    const submissionId = subResult.insertId;
+
+    // 2. วนลูปบันทึกคำตอบ (evaluation_answers)
+    for (let ans of answers) {
+      const sqlAnswer = `
+        INSERT INTO evaluation_answers (submission_id, question_id, score_value, comment)
+        VALUES (?, ?, ?, ?)
+      `;
+      // ถ้าเป็นคำถามแบบ text จะไม่มีคะแนน (score_value = null) และไปใส่ช่อง comment แทน
+      await connection.query(sqlAnswer, [
+        submissionId,
+        ans.question_id,
+        ans.score_value || null,
+        ans.comment || null,
+      ]);
+    }
+
+    await connection.commit();
+    return res
+      .status(201)
+      .json({ success: true, message: "บันทึกผลการประเมินสำเร็จ!" });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error("Error submitEvaluationAnswer:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึก" });
+  } finally {
+    connection.release();
+  }
+};
