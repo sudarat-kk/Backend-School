@@ -50,41 +50,97 @@ export const getGeneralEvaluation = async (
   }
 };
 
-// สร้างฟอร์มประเมินใหม่
+// สร้างฟอร์มประเมินใหม่ (พร้อมบันทึกคำถามและตัวเลือก)
 export const createEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  // เพิ่ม subjectId ที่แนบมาจาก Frontend
-  const { formType, googleFormUrl, formName, generationId, subjectId } =
-    req.body;
+  // 1. รับข้อมูลโครงสร้างใหม่จาก Frontend (ตัด googleFormUrl ทิ้งไป รับ questions เข้ามาแทน)
+  const { formType, formName, generationId, subjectId, questions } = req.body;
+
+  // เช็คว่ามีคำถามส่งมาด้วยไหม
+  if (!questions || !Array.isArray(questions) || questions.length === 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาเพิ่มคำถามอย่างน้อย 1 ข้อ" });
+  }
+
+  // ดึง connection ออกมาเพื่อทำ Transaction (ป้องกันข้อมูลบันทึกไม่ครบ)
+  const connection = await conn.getConnection();
 
   try {
-    const sql = `
-      INSERT INTO evaluation_forms 
-      (batch_id, subject_id, evaluation_type, form_url, form_name, is_active, created_at, updated_at) 
-      VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())
-    `;
+    await connection.beginTransaction();
 
-    // ใส่ subjectId ลงใน array ของ query parameters
-    const [result]: any = await conn.query(sql, [
+    // 2. บันทึก "หัวฟอร์ม" ลงตาราง evaluation_forms (เอา form_url ออก)
+    const sqlForm = `
+      INSERT INTO evaluation_forms 
+      (batch_id, subject_id, evaluation_type, form_name, is_active, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, 1, NOW(), NOW())
+    `;
+    const [formResult]: any = await connection.query(sqlForm, [
       generationId || null,
-      subjectId || null, // บันทึก subjectId (ถ้าไม่ได้เลือกจะเก็บเป็น null)
+      subjectId || null,
       formType,
-      googleFormUrl,
       formName,
     ]);
 
+    const formId = formResult.insertId; // ได้ ID ของฟอร์มมาเพื่อใช้ผูกกับคำถาม
+
+    // 3. วนลูปบันทึก "คำถาม" และ "ตัวเลือก"
+    for (const [index, q] of questions.entries()) {
+      // 3.1 บันทึกคำถามลงตาราง evaluation_questions
+      const sqlQuestion = `
+        INSERT INTO evaluation_questions 
+        (form_id, question_text, question_type, order_num) 
+        VALUES (?, ?, ?, ?)
+      `;
+      const [questionResult]: any = await connection.query(sqlQuestion, [
+        formId,
+        q.question_text,
+        q.question_type || "choice",
+        index + 1, // ให้ลำดับข้อเรียงตาม Array ที่ส่งมา
+      ]);
+
+      const questionId = questionResult.insertId; // ได้ ID ของคำถามมาผูกกับตัวเลือก
+
+      // 3.2 ถ้าคำถามนี้เป็นแบบมีตัวเลือก (choice) ให้วนลูปบันทึกตัวเลือกลง evaluation_choices
+      if (
+        q.question_type === "choice" &&
+        q.choices &&
+        Array.isArray(q.choices)
+      ) {
+        const choiceValues = q.choices.map((c: any, cIndex: number) => [
+          questionId,
+          c.choice_text,
+          c.score_value,
+          cIndex + 1,
+        ]);
+
+        if (choiceValues.length > 0) {
+          const sqlChoices = `
+            INSERT INTO evaluation_choices (question_id, choice_text, score_value, order_num) 
+            VALUES ?
+          `;
+          await connection.query(sqlChoices, [choiceValues]);
+        }
+      }
+    }
+
+    // ถ้าทุกอย่างผ่านฉลุย ให้ Commit ยืนยันการบันทึกข้อมูล
+    await connection.commit();
     return res.status(201).json({
       success: true,
-      message: "สร้างฟอร์มสำเร็จ",
-      data: { id: result.insertId },
+      message: "สร้างชุดแบบประเมินสำเร็จ",
+      data: { form_id: formId },
     });
   } catch (error: any) {
+    await connection.rollback(); // ถ้าระหว่างเซฟคำถามพัง ให้ยกเลิกการสร้างฟอร์มนี้ทิ้งไปเลย
     console.error("Error createEvaluation:", error);
     return res
       .status(500)
       .json({ success: false, message: "Internal Server Error" });
+  } finally {
+    connection.release();
   }
 };
 
