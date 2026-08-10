@@ -62,41 +62,68 @@ export const getStudentScores = async (
       return;
     }
 
+    // 1. อัปเดต detailQuery เพื่อเช็คประวัติการประเมิน
     const detailQuery = `
-            SELECT sg.group_name, sub.subject_name, sbs.max_score, COALESCE(ss.raw_score, 0) AS raw_score
-            FROM subject_batch_settings sbs
-            JOIN subjects sub ON sbs.subject_id = sub.id
-            JOIN subject_groups sg ON sub.group_id = sg.id
-            LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
-            WHERE sbs.batch_id = ?
-            ORDER BY sg.id, sub.id;
-        `;
+      SELECT 
+        sg.group_name, 
+        sub.id AS subject_id,   -- เพิ่ม subject_id ส่งกลับไปด้วย เผื่อต้องใช้ทำเงื่อนไขหน้าบ้าน
+        sub.subject_name, 
+        sbs.max_score, 
+        COALESCE(ss.raw_score, 0) AS raw_score,
+        -- เช็คว่าใน evaluation_submissions มีข้อมูลหรือไม่ (ถ้ามี=1(true), ถ้าไม่มี=0(false))
+        IF(eval.id IS NOT NULL, true, false) AS is_evaluated
+      FROM subject_batch_settings sbs
+      JOIN subjects sub ON sbs.subject_id = sub.id
+      JOIN subject_groups sg ON sub.group_id = sg.id
+      LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
+      
+      LEFT JOIN evaluation_submissions eval 
+        ON eval.subject_id = sub.id 
+        AND eval.student_id = ? 
+        
+      WHERE sbs.batch_id = ?
+      ORDER BY sg.id, sub.id;
+    `;
+
+    // สังเกตว่าเรามี ? 3 ตัว (ss.student_id, eval.student_id, sbs.batch_id)
     const [subjectDetails] = await conn.execute<RowDataPacket[]>(detailQuery, [
       studentId,
+      studentId, // ส่ง studentId เข้าไปเทียบใน LEFT JOIN ด้วย
       batchId,
     ]);
 
+    // 2. แปลงผลลัพธ์จาก MySQL ให้เป็น boolean เป๊ะๆ (1/0 -> true/false)
+    const formattedSubjectDetails = subjectDetails.map((row) => ({
+      ...row,
+      is_evaluated: !!row.is_evaluated, // บังคับแปลงเป็น boolean ให้ Angular รับค่าง่ายๆ
+    }));
+
+    // 3. summaryQuery ใช้ตัวเดิมได้เลย (คะแนนรวมไม่ได้รับผลกระทบ)
     const summaryQuery = `
-            SELECT sg.group_name, sg.credits, SUM(sbs.max_score) AS group_max_score,
-                   COALESCE(SUM(ss.raw_score), 0) AS group_raw_score,
-                   COALESCE((SUM(ss.raw_score) / SUM(sbs.max_score)) * 100, 0) AS group_percentage
-            FROM subject_groups sg
-            JOIN subjects sub ON sg.id = sub.group_id
-            JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
-            LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
-            WHERE sg.batch_id = ?
-            GROUP BY sg.id;
-        `;
+      SELECT 
+        sg.group_name, 
+        sg.credits, 
+        SUM(sbs.max_score) AS group_max_score,
+        COALESCE(SUM(ss.raw_score), 0) AS group_raw_score,
+        COALESCE((SUM(ss.raw_score) / SUM(sbs.max_score)) * 100, 0) AS group_percentage
+      FROM subject_groups sg
+      JOIN subjects sub ON sg.id = sub.group_id
+      JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
+      LEFT JOIN student_scores ss ON sbs.id = ss.setting_id AND ss.student_id = ?
+      WHERE sg.batch_id = ?
+      GROUP BY sg.id;
+    `;
     const [groupSummaries] = await conn.execute<RowDataPacket[]>(summaryQuery, [
       studentId,
       batchId,
     ]);
 
+    // 4. ส่งผลลัพธ์กลับ
     res.status(200).json({
       message: "ดึงข้อมูลสำเร็จ",
       student_id: studentId,
       batch_id: batchId,
-      subject_details: subjectDetails,
+      subject_details: formattedSubjectDetails, // ใช้ตัวที่เราแปลง boolean แล้ว
       group_summaries: groupSummaries,
     });
   } catch (error) {

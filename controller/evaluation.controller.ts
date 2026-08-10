@@ -243,32 +243,45 @@ export const getEvaluationQuestions = async (
       .json({ success: false, message: "Internal Server Error" });
   }
 };
+
 // 2. บันทึกคำตอบที่นักเรียนส่งมา (POST)
 export const submitEvaluationAnswer = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  const { formId, subjectId, instructorName, answers } = req.body;
+  // 1. รับ student_id ที่ส่งมาจาก Frontend (จากการอ่านค่า studentData ใน LocalStorage)
+  const { studentId, formId, subjectId, instructorName, answers } = req.body;
 
-  // เนื่องจาก Database ของคุณบังคับให้ student_id ห้ามว่าง (NOT NULL)
-  // แต่โจทย์คือนักเรียนไม่ต้องกรอกรหัส เราเลยสุ่มรหัสใส่ให้ชั่วคราวเพื่อไม่ให้ Database ฟ้อง Error
-  const dummyStudentId = "STD-" + Date.now().toString().slice(-6);
+  // ตรวจสอบข้อมูลเบื้องต้น
+  if (!studentId || !formId || !answers || !Array.isArray(answers)) {
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message:
+          "ข้อมูลที่ส่งมาไม่ครบถ้วน (ต้องการ studentId, formId, answers)",
+      });
+  }
+
   const connection = await conn.getConnection();
   try {
     await connection.beginTransaction();
-    // 1. บันทึกใบเสร็จ (evaluation_submissions)
+
+    // 2. บันทึกใบเสร็จ (evaluation_submissions) โดยใช้ studentId ของจริง
     const sqlSubmission = `
       INSERT INTO evaluation_submissions (student_id, form_id, subject_id, instructor_name, created_at)
       VALUES (?, ?, ?, ?, NOW())
     `;
     const [subResult]: any = await connection.query(sqlSubmission, [
-      dummyStudentId,
+      studentId, // ใช้รหัสนักเรียนจริง
       formId,
       subjectId || null,
       instructorName || "ไม่ระบุ",
     ]);
+
     const submissionId = subResult.insertId;
-    // 2. วนลูปบันทึกคำตอบ (evaluation_answers)
+
+    // 3. วนลูปบันทึกคำตอบ (evaluation_answers)
     for (let ans of answers) {
       const sqlAnswer = `
         INSERT INTO evaluation_answers (submission_id, question_id, score_value, comment)
@@ -282,6 +295,7 @@ export const submitEvaluationAnswer = async (
         ans.comment || null,
       ]);
     }
+
     await connection.commit();
     return res
       .status(201)
@@ -289,6 +303,15 @@ export const submitEvaluationAnswer = async (
   } catch (error: any) {
     await connection.rollback();
     console.error("Error submitEvaluationAnswer:", error);
+
+    // 4. ดักจับ Error กรณีประเมินซ้ำ (ติด Unique Key)
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({
+        success: false,
+        message: "คุณได้ประเมินวิชานี้ไปแล้ว ไม่สามารถประเมินซ้ำได้",
+      });
+    }
+
     return res
       .status(500)
       .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึก" });
