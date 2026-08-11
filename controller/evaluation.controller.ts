@@ -241,36 +241,64 @@ export const updateEvaluation = async (
         .json({ success: false, message: "ไม่พบข้อมูลที่ต้องการแก้ไข" });
     }
 
-    // 2. ลบคำถามเก่าทิ้งทั้งหมด (ถ้ามีคนตอบแล้วจะลบไม่ได้ เป็นระบบป้องกันที่ดี)
-    try {
-      await connection.query(`DELETE FROM evaluation_questions WHERE form_id = ?`, [id]);
-    } catch (delError: any) {
-      if (delError.code === "ER_ROW_IS_REFERENCED_2") {
-        await connection.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "แบบประเมินนี้มีนักเรียนตอบแล้ว ไม่สามารถแก้ไขชุดคำถามได้!",
-        });
+    // 2. จัดการคำถาม
+    const keptQuestionIds = questions
+      .filter((q: any) => q.id)
+      .map((q: any) => q.id);
+
+    // หาคำถามเก่าที่อยู่ในฐานข้อมูลแต่ไม่ได้อยู่ใน payload (คือโดนลบออก)
+    const [existingQuestions]: any = await connection.query(
+      `SELECT id FROM evaluation_questions WHERE form_id = ?`,
+      [id]
+    );
+
+    let unableToDeleteCount = 0;
+
+    for (const eq of existingQuestions) {
+      if (!keptQuestionIds.includes(eq.id)) {
+        try {
+          await connection.query(`DELETE FROM evaluation_questions WHERE id = ?`, [eq.id]);
+        } catch (delErr: any) {
+          if (delErr.code === "ER_ROW_IS_REFERENCED_2") {
+            // ลบไม่ได้เพราะมีคนตอบแล้ว ปล่อยผ่านไปแต่จำไว้เพื่อไปแจ้งเตือน
+            unableToDeleteCount++;
+          } else {
+            throw delErr;
+          }
+        }
       }
-      throw delError;
     }
 
-    // 3. วนลูปบันทึกคำถามและตัวเลือกใหม่
+    // 3. วนลูป อัปเดต หรือ เพิ่ม คำถาม
     for (const [index, q] of questions.entries()) {
-      const sqlQuestion = `
-        INSERT INTO evaluation_questions 
-        (form_id, question_text, question_type, order_num) 
-        VALUES (?, ?, ?, ?)
-      `;
-      const [questionResult]: any = await connection.query(sqlQuestion, [
-        id,
-        q.question_text,
-        q.question_type || "choice",
-        index + 1,
-      ]);
+      let questionId = q.id;
 
-      const questionId = questionResult.insertId;
+      if (questionId) {
+        // อัปเดตคำถามเดิม
+        await connection.query(
+          `UPDATE evaluation_questions SET question_text = ?, question_type = ?, order_num = ? WHERE id = ? AND form_id = ?`,
+          [q.question_text, q.question_type || "choice", index + 1, questionId, id]
+        );
+        
+        // ลบตัวเลือกเก่าทิ้งทั้งหมดของคำถามนี้ (ปลอดภัยเพราะไม่มี FK โยงมาหา)
+        await connection.query(`DELETE FROM evaluation_choices WHERE question_id = ?`, [questionId]);
+      } else {
+        // สร้างคำถามใหม่
+        const sqlQuestion = `
+          INSERT INTO evaluation_questions 
+          (form_id, question_text, question_type, order_num) 
+          VALUES (?, ?, ?, ?)
+        `;
+        const [questionResult]: any = await connection.query(sqlQuestion, [
+          id,
+          q.question_text,
+          q.question_type || "choice",
+          index + 1,
+        ]);
+        questionId = questionResult.insertId;
+      }
 
+      // 4. เพิ่มตัวเลือก (ทั้งใหม่และเก่าที่ถูกลบไปแล้วสร้างใหม่)
       if (q.question_type === "choice" && q.choices && Array.isArray(q.choices)) {
         const choiceValues = q.choices.map((c: any, cIndex: number) => [
           questionId,
@@ -290,9 +318,15 @@ export const updateEvaluation = async (
     }
 
     await connection.commit();
+
+    let finalMessage = "อัปเดตข้อมูลฟอร์มและคำถามสำเร็จ";
+    if (unableToDeleteCount > 0) {
+      finalMessage += ` (ไม่สามารถลบคำถามบางข้อได้เนื่องจากมีนักเรียนตอบแล้ว แต่บันทึกการแก้ไขคำถามอื่นๆ สำเร็จ)`;
+    }
+
     return res
       .status(200)
-      .json({ success: true, message: "อัปเดตข้อมูลฟอร์มและคำถามสำเร็จ" });
+      .json({ success: true, message: finalMessage });
   } catch (error: any) {
     await connection.rollback();
     console.error("Error updateEvaluation:", error);
@@ -300,7 +334,41 @@ export const updateEvaluation = async (
       .status(500)
       .json({ success: false, message: "Internal Server Error" });
   } finally {
-    connection.release();
+    await connection.release();
+  }
+};
+
+// ลบข้อมูลฟอร์มประเมิน
+export const deleteEvaluation = async (
+  req: Request,
+  res: Response,
+): Promise<Response | void> => {
+  const { id } = req.params;
+
+  try {
+    const [result]: any = await conn.query(
+      `DELETE FROM evaluation_forms WHERE id = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "ไม่พบแบบฟอร์มที่ต้องการลบ" });
+    }
+
+    return res.status(200).json({ success: true, message: "ลบแบบฟอร์มสำเร็จ" });
+  } catch (error: any) {
+    console.error("Error deleteEvaluation:", error);
+    if (error.code === "ER_ROW_IS_REFERENCED_2") {
+      return res.status(400).json({
+        success: false,
+        message: "ไม่สามารถลบแบบฟอร์มนี้ได้ เนื่องจากมีนักเรียนตอบแบบประเมินแล้ว",
+      });
+    }
+    return res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการลบแบบฟอร์ม" });
   }
 };
 
