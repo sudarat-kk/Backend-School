@@ -140,29 +140,92 @@ export const createEvaluation = async (
       .status(500)
       .json({ success: false, message: "Internal Server Error" });
   } finally {
-    connection.release();
+    await connection.release();
   }
 };
 
-// อัปเดตข้อมูลฟอร์มประเมิน
+// ดึงข้อมูลฟอร์มด้วย ID สำหรับนำไป Edit
+export const getEvaluationById = async (
+  req: Request,
+  res: Response,
+): Promise<Response | void> => {
+  const { id } = req.params;
+  try {
+    const [forms]: any = await conn.query(
+      `SELECT * FROM evaluation_forms WHERE id = ?`,
+      [id]
+    );
+
+    if (forms.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "ไม่พบแบบประเมินที่ต้องการ" });
+    }
+    const form = forms[0];
+
+    // ดึงคำถาม
+    const [questions]: any = await conn.query(
+      `SELECT * FROM evaluation_questions WHERE form_id = ? ORDER BY order_num ASC`,
+      [form.id],
+    );
+
+    // ดึงตัวเลือก
+    for (let q of questions) {
+      if (q.question_type === "choice") {
+        const [choices]: any = await conn.query(
+          `SELECT * FROM evaluation_choices WHERE question_id = ? ORDER BY order_num ASC`,
+          [q.id],
+        );
+        q.choices = choices;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        form_id: form.id,
+        form_name: form.form_name,
+        evaluation_type: form.evaluation_type,
+        batch_id: form.batch_id,
+        subject_id: form.subject_id,
+        questions: questions,
+      },
+    });
+  } catch (error: any) {
+    console.error("Error getEvaluationById:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+
+// อัปเดตข้อมูลฟอร์มประเมินและชุดคำถาม
 export const updateEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
   const { id } = req.params;
-  // เพิ่ม subjectId ที่แนบมาจาก Frontend
-  const { formType, googleFormUrl, formName, generationId, subjectId } =
-    req.body;
+  const { formType, googleFormUrl, formName, generationId, subjectId, questions } = req.body;
 
+  if (!questions || !Array.isArray(questions) || questions.length === 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาเพิ่มคำถามอย่างน้อย 1 ข้อ" });
+  }
+
+  const connection = await conn.getConnection();
   try {
+    await connection.beginTransaction();
+
+    // 1. อัปเดตหัวฟอร์ม
     const sql = `
       UPDATE evaluation_forms 
       SET batch_id = ?, subject_id = ?, evaluation_type = ?, form_url = ?, form_name = ?, updated_at = NOW() 
       WHERE id = ?
     `;
 
-    // อัปเดต subjectId ด้วย
-    const [result]: any = await conn.query(sql, [
+    const [result]: any = await connection.query(sql, [
       generationId || null,
       subjectId || null,
       formType,
@@ -172,19 +235,72 @@ export const updateEvaluation = async (
     ]);
 
     if (result.affectedRows === 0) {
+      await connection.rollback();
       return res
         .status(404)
         .json({ success: false, message: "ไม่พบข้อมูลที่ต้องการแก้ไข" });
     }
 
+    // 2. ลบคำถามเก่าทิ้งทั้งหมด (ถ้ามีคนตอบแล้วจะลบไม่ได้ เป็นระบบป้องกันที่ดี)
+    try {
+      await connection.query(`DELETE FROM evaluation_questions WHERE form_id = ?`, [id]);
+    } catch (delError: any) {
+      if (delError.code === "ER_ROW_IS_REFERENCED_2") {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "แบบประเมินนี้มีนักเรียนตอบแล้ว ไม่สามารถแก้ไขชุดคำถามได้!",
+        });
+      }
+      throw delError;
+    }
+
+    // 3. วนลูปบันทึกคำถามและตัวเลือกใหม่
+    for (const [index, q] of questions.entries()) {
+      const sqlQuestion = `
+        INSERT INTO evaluation_questions 
+        (form_id, question_text, question_type, order_num) 
+        VALUES (?, ?, ?, ?)
+      `;
+      const [questionResult]: any = await connection.query(sqlQuestion, [
+        id,
+        q.question_text,
+        q.question_type || "choice",
+        index + 1,
+      ]);
+
+      const questionId = questionResult.insertId;
+
+      if (q.question_type === "choice" && q.choices && Array.isArray(q.choices)) {
+        const choiceValues = q.choices.map((c: any, cIndex: number) => [
+          questionId,
+          c.choice_text,
+          c.score_value,
+          cIndex + 1,
+        ]);
+
+        if (choiceValues.length > 0) {
+          const sqlChoices = `
+            INSERT INTO evaluation_choices (question_id, choice_text, score_value, order_num) 
+            VALUES ?
+          `;
+          await connection.query(sqlChoices, [choiceValues]);
+        }
+      }
+    }
+
+    await connection.commit();
     return res
       .status(200)
-      .json({ success: true, message: "อัปเดตข้อมูลสำเร็จ" });
+      .json({ success: true, message: "อัปเดตข้อมูลฟอร์มและคำถามสำเร็จ" });
   } catch (error: any) {
+    await connection.rollback();
     console.error("Error updateEvaluation:", error);
     return res
       .status(500)
       .json({ success: false, message: "Internal Server Error" });
+  } finally {
+    connection.release();
   }
 };
 

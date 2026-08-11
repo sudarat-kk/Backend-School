@@ -6,6 +6,7 @@ import {
   getGeneralEvaluation,
   submitEvaluationAnswer,
   updateEvaluation,
+  getEvaluationById,
 } from "../controller/evaluation.controller";
 
 const router = Router();
@@ -18,6 +19,10 @@ router.get("/general-evaluation/:batchId", getGeneralEvaluation);
 router.post("/evaluation", createEvaluation);
 // PUT: /api/evaluations/:id - อัปเดตข้อมูล
 router.put("/evaluation/:id", updateEvaluation);
+
+// GET: /api/evaluation/:id - ดึงข้อมูลฟอร์มพร้อมชุดคำถามสำหรับแก้ไข
+router.get("/evaluation/:id", getEvaluationById);
+
 router.get("/forms/:batchId/questions", getEvaluationQuestions);
 // ส่งคำตอบ (ใช้ HTTP POST)
 router.post("/forms/submit", submitEvaluationAnswer);
