@@ -124,3 +124,47 @@ export const getAllBatches = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาด" });
   }
 };
+
+// อัปเดตรุ่น (Batch)
+export const updateBatch = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { batch_name, start_date, end_date } = req.body;
+  
+  try {
+    const [result]: any = await conn.query(
+      "UPDATE course_batches SET batch_name = ?, start_date = ?, end_date = ? WHERE id = ?",
+      [batch_name, start_date || null, end_date || null, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบรุ่นที่ต้องการแก้ไข" });
+    }
+
+    res.json({ success: true, message: "แก้ไขรุ่นสำเร็จ" });
+  } catch (error) {
+    console.error("Error updating batch:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการแก้ไขรุ่น" });
+  }
+};
+
+// ลบรุ่น (Batch)
+export const deleteBatch = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  try {
+    // ลบรุ่น ข้อมูลที่เกี่ยวเนื่อง (นักเรียน, คะแนน, วิชา, ฟอร์ม) จะถูกลบตามทันทีด้วย ON DELETE CASCADE
+    const [result]: any = await conn.query(
+      "DELETE FROM course_batches WHERE id = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบรุ่นที่ต้องการลบ" });
+    }
+
+    res.json({ success: true, message: "ลบรุ่นและข้อมูลที่เกี่ยวข้องสำเร็จ" });
+  } catch (error) {
+    console.error("Error deleting batch:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการลบรุ่น" });
+  }
+};
