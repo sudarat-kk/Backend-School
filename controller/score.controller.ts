@@ -713,6 +713,7 @@ export const getScoreSubmissions = async (
         sub.id AS subject_id, 
         sub.subject_name,
         sg.group_name,
+        sg.credits,
         IFNULL(sss.is_submitted, 0) AS is_submitted,
         sss.submitted_at,
         sss.note,
