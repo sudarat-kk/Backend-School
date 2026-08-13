@@ -168,3 +168,25 @@ export const deleteBatch = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการลบรุ่น" });
   }
 };
+
+// ลบหลักสูตร (Course)
+export const deleteCourse = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  try {
+    // ลบหลักสูตร ข้อมูลที่เกี่ยวเนื่อง (รุ่น, นักเรียน, คะแนน, วิชา, ฟอร์ม) จะถูกลบตามทันทีด้วย ON DELETE CASCADE
+    const [result]: any = await conn.query(
+      "DELETE FROM courses WHERE id = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบหลักสูตรที่ต้องการลบ" });
+    }
+
+    res.json({ success: true, message: "ลบหลักสูตรและข้อมูลที่เกี่ยวข้องสำเร็จ" });
+  } catch (error) {
+    console.error("Error deleting course:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการลบหลักสูตร" });
+  }
+};

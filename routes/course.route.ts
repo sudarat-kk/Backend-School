@@ -7,6 +7,7 @@ import {
   getGroupedCourses,
   updateBatch,
   deleteBatch,
+  deleteCourse,
 } from "../controller/course.controller";
 import {
   addSubject,
@@ -24,6 +25,7 @@ router.post("/courses", addCourse);
 router.post("/batches", addBatch);
 router.put("/batches/:id", updateBatch);
 router.delete("/batches/:id", deleteBatch);
+router.delete("/courses/:id", deleteCourse);
 router.post("/subject-groups", addSubjectGroup);
 router.post("/subjects", addSubject);
 
