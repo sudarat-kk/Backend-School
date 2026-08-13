@@ -692,3 +692,106 @@ export const saveBatchScores = async (
     });
   }
 };
+
+// ==========================================
+// 7. ดึงข้อมูลสถานะการส่งคะแนนตามรุ่น (Score Submissions)
+// ==========================================
+export const getScoreSubmissions = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const batchId = req.query.batch_id;
+
+  if (!batchId) {
+    res.status(400).json({ success: false, message: "กรุณาระบุ batch_id" });
+    return;
+  }
+
+  try {
+    const sql = `
+      SELECT 
+        sub.id AS subject_id, 
+        sub.subject_name,
+        sg.group_name,
+        IFNULL(sss.is_submitted, 0) AS is_submitted,
+        sss.submitted_at,
+        sss.note,
+        (
+            SELECT COUNT(*) 
+            FROM student_scores sc
+            JOIN subject_batch_settings sbs ON sc.setting_id = sbs.id
+            WHERE sbs.batch_id = sg.batch_id AND sbs.subject_id = sub.id
+        ) > 0 AS has_scores_in_db
+      FROM subjects sub
+      JOIN subject_groups sg ON sub.group_id = sg.id
+      LEFT JOIN subject_score_submissions sss 
+        ON sub.id = sss.subject_id AND sss.batch_id = ?
+      WHERE sg.batch_id = ?
+      ORDER BY sg.id ASC, sub.id ASC
+    `;
+
+    const [rows]: any = await conn.query(sql, [batchId, batchId]);
+
+    res.status(200).json({
+      success: true,
+      data: rows,
+    });
+  } catch (error) {
+    console.error("Error fetching score submissions:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูล" });
+  }
+};
+
+// ==========================================
+// 8. บันทึกสถานะการส่งคะแนน
+// ==========================================
+export const saveScoreSubmissions = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { batch_id, submissions } = req.body;
+
+  if (!batch_id || !Array.isArray(submissions)) {
+    res.status(400).json({ success: false, message: "ข้อมูลที่ส่งมาไม่ถูกต้อง" });
+    return;
+  }
+
+  const connection = await conn.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const insertQuery = `
+      INSERT INTO subject_score_submissions (batch_id, subject_id, is_submitted, submitted_at, note) 
+      VALUES (?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE 
+        is_submitted = VALUES(is_submitted), 
+        submitted_at = VALUES(submitted_at), 
+        note = VALUES(note)
+    `;
+
+    for (const item of submissions) {
+      await connection.execute(insertQuery, [
+        batch_id,
+        item.subject_id,
+        item.is_submitted,
+        item.submitted_at || null,
+        item.note || null,
+      ]);
+    }
+
+    await connection.commit();
+
+    res.status(200).json({
+      success: true,
+      message: "บันทึกข้อมูลการตรวจสอบสำเร็จ",
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error saving score submissions:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
+  } finally {
+    connection.release();
+  }
+};
+
