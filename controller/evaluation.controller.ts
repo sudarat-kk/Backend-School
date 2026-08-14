@@ -560,13 +560,13 @@ export const getFormSubmissions = async (
       const answerDict: any = {};
       for (const ans of userAnswers) {
         // ให้ค่าคะแนนเป็นหลัก ถ้าไม่มีคะแนนให้แสดง comment (สำหรับ text type)
-        answerDict[\`q_\${ans.question_id}\`] = ans.score_value !== null ? ans.score_value : (ans.comment || '-');
+        answerDict[`q_${ans.question_id}`] = ans.score_value !== null ? ans.score_value : (ans.comment || '-');
       }
 
       return {
         id: sub.submission_id,
         submittedAt: sub.submitted_at,
-        name: \`\${sub.rank_name || ''} \${sub.first_name || ''} \${sub.last_name || ''}\`.trim(),
+        name: `${sub.rank_name || ''} ${sub.first_name || ''} ${sub.last_name || ''}`.trim(),
         studentCode: sub.student_code,
         instructorName: sub.instructor_name,
         answers: answerDict
