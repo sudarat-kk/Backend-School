@@ -503,3 +503,89 @@ export const submitEvaluationAnswer = async (
     connection.release();
   }
 };
+
+// 3. ดึงข้อมูลผู้ที่ตอบแบบฟอร์มแล้วพร้อมคำตอบแต่ละข้อ (GET)
+export const getFormSubmissions = async (
+  req: Request,
+  res: Response,
+): Promise<Response | void> => {
+  const { formId } = req.params;
+
+  try {
+    // 1. ดึงข้อมูลคำถามของฟอร์มนี้ เพื่อทำเป็น Header คอลัมน์
+    const [questions]: any = await conn.query(
+      `SELECT id, question_text, order_num FROM evaluation_questions WHERE form_id = ? ORDER BY order_num ASC`,
+      [formId]
+    );
+
+    if (questions.length === 0) {
+       return res.status(200).json({ success: true, data: { questions: [], submissions: [] } });
+    }
+
+    // 2. ดึงข้อมูลผู้ส่ง (Submissions)
+    const sqlSubmissions = `
+      SELECT 
+        s.id AS submission_id,
+        s.created_at AS submitted_at,
+        s.instructor_name,
+        st.student_code,
+        st.rank_name,
+        st.first_name,
+        st.last_name
+      FROM evaluation_submissions s
+      LEFT JOIN students st ON s.student_id = st.student_code
+      WHERE s.form_id = ?
+      ORDER BY s.created_at DESC
+    `;
+    const [submissionsRaw]: any = await conn.query(sqlSubmissions, [formId]);
+
+    // 3. ดึงคำตอบทั้งหมดของฟอร์มนี้
+    const sqlAnswers = `
+      SELECT 
+        a.submission_id,
+        a.question_id,
+        a.score_value,
+        a.comment
+      FROM evaluation_answers a
+      INNER JOIN evaluation_submissions s ON a.submission_id = s.id
+      WHERE s.form_id = ?
+    `;
+    const [answersRaw]: any = await conn.query(sqlAnswers, [formId]);
+
+    // 4. ประกอบร่างข้อมูล (Transform Data)
+    const submissions = submissionsRaw.map((sub: any) => {
+      // ค้นหาคำตอบของ submission นี้
+      const userAnswers = answersRaw.filter((a: any) => a.submission_id === sub.submission_id);
+      
+      const answerDict: any = {};
+      for (const ans of userAnswers) {
+        // ให้ค่าคะแนนเป็นหลัก ถ้าไม่มีคะแนนให้แสดง comment (สำหรับ text type)
+        answerDict[\`q_\${ans.question_id}\`] = ans.score_value !== null ? ans.score_value : (ans.comment || '-');
+      }
+
+      return {
+        id: sub.submission_id,
+        submittedAt: sub.submitted_at,
+        name: \`\${sub.rank_name || ''} \${sub.first_name || ''} \${sub.last_name || ''}\`.trim(),
+        studentCode: sub.student_code,
+        instructorName: sub.instructor_name,
+        answers: answerDict
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        questions: questions,
+        submissions: submissions
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Error getFormSubmissions:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลแบบฟอร์ม" });
+  }
+};
+

@@ -8,6 +8,7 @@ import {
   updateEvaluation,
   getEvaluationById,
   deleteEvaluation,
+  getFormSubmissions,
 } from "../controller/evaluation.controller";
 
 const router = Router();
@@ -30,5 +31,8 @@ router.delete("/evaluation/:id", deleteEvaluation);
 router.get("/forms/:batchId/questions", getEvaluationQuestions);
 // ส่งคำตอบ (ใช้ HTTP POST)
 router.post("/forms/submit", submitEvaluationAnswer);
+
+// GET: /api/evaluation/form-submissions/:formId - ดึงข้อมูลคำตอบทั้งหมดของฟอร์ม
+router.get("/form-submissions/:formId", getFormSubmissions);
 
 export default router;
