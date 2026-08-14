@@ -47,11 +47,15 @@ export const getSubjectsByBatch = async (
       }
 
       if (row.subject_id) {
-        groupsMap[row.group_id].subjects.push({
-          subject_id: row.subject_id,
-          subject_name: row.subject_name,
-          form_url: row.form_url || null, // เพิ่มบรรทัดนี้ เพื่อแนบลิงก์ฟอร์มไปด้วย (ถ้าไม่มีจะเป็น null)
-        });
+        // ป้องกันรายวิชาซ้ำกัน (กรณีมีฟอร์มซ้ำในฐานข้อมูลทำให้ LEFT JOIN คืนค่ามาหลายแถว)
+        const isExist = groupsMap[row.group_id].subjects.some((s: any) => s.subject_id === row.subject_id);
+        if (!isExist) {
+          groupsMap[row.group_id].subjects.push({
+            subject_id: row.subject_id,
+            subject_name: row.subject_name,
+            form_url: row.form_url || null,
+          });
+        }
       }
     });
 
