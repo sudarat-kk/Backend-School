@@ -711,7 +711,6 @@ export const getScoreSubmissions = async (
     const sql = `
       SELECT 
         sub.id AS subject_id, 
-        sub.subject_code,
         sub.subject_name,
         sg.id AS group_id,
         sg.group_name,
