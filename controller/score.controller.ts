@@ -10,7 +10,7 @@ export const updateSubjectMaxScore = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { batch_id, subject_id, max_score } = req.body;
+    const { batch_id, subject_id, max_score, is_su = false } = req.body;
 
     if (!batch_id || !subject_id || max_score === undefined) {
       res.status(400).json({
@@ -23,15 +23,16 @@ export const updateSubjectMaxScore = async (
     // ถ้าไม่มีข้อมูล จะทำการสร้างให้ใหม่ (แก้ปัญหา 404)
     // ถ้ามีข้อมูลอยู่แล้ว จะอัปเดตค่าให้แทน
     const updateQuery = `
-      INSERT INTO subject_batch_settings (batch_id, subject_id, max_score) 
-      VALUES (?, ?, ?) 
-      ON DUPLICATE KEY UPDATE max_score = VALUES(max_score)
+      INSERT INTO subject_batch_settings (batch_id, subject_id, max_score, is_su) 
+      VALUES (?, ?, ?, ?) 
+      ON DUPLICATE KEY UPDATE max_score = VALUES(max_score), is_su = VALUES(is_su)
     `;
 
     const [result]: any = await conn.execute(updateQuery, [
       batch_id,
       subject_id,
       max_score,
+      is_su ? 1 : 0
     ]);
 
     res.status(200).json({
@@ -39,6 +40,7 @@ export const updateSubjectMaxScore = async (
       batch_id: batch_id,
       subject_id: subject_id,
       new_max_score: max_score,
+      is_su: is_su
     });
   } catch (error) {
     console.error("Error updating max score:", error);
@@ -150,7 +152,7 @@ export const getAdminSubjectScores = async (
   }
 
   try {
-    const settingSql = `SELECT id as setting_id, max_score FROM subject_batch_settings WHERE batch_id = ? AND subject_id = ? LIMIT 1`;
+    const settingSql = `SELECT id as setting_id, max_score, is_su FROM subject_batch_settings WHERE batch_id = ? AND subject_id = ? LIMIT 1`;
     const [settingRows]: any = await conn.query(settingSql, [
       batch_id,
       subject_id,
@@ -187,6 +189,7 @@ export const getAdminSubjectScores = async (
     res.status(200).json({
       success: true,
       max_score: setting.max_score,
+      is_su: setting.is_su === 1,
       data: studentRows,
     });
   } catch (error) {
