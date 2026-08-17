@@ -10,7 +10,7 @@ export const updateSubjectMaxScore = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { batch_id, subject_id, max_score, is_su = false } = req.body;
+    const { batch_id, subject_id, max_score } = req.body;
 
     if (!batch_id || !subject_id || max_score === undefined) {
       res.status(400).json({
@@ -23,16 +23,15 @@ export const updateSubjectMaxScore = async (
     // ถ้าไม่มีข้อมูล จะทำการสร้างให้ใหม่ (แก้ปัญหา 404)
     // ถ้ามีข้อมูลอยู่แล้ว จะอัปเดตค่าให้แทน
     const updateQuery = `
-      INSERT INTO subject_batch_settings (batch_id, subject_id, max_score, is_su) 
-      VALUES (?, ?, ?, ?) 
-      ON DUPLICATE KEY UPDATE max_score = VALUES(max_score), is_su = VALUES(is_su)
+      INSERT INTO subject_batch_settings (batch_id, subject_id, max_score) 
+      VALUES (?, ?, ?) 
+      ON DUPLICATE KEY UPDATE max_score = VALUES(max_score)
     `;
 
     const [result]: any = await conn.execute(updateQuery, [
       batch_id,
       subject_id,
       max_score,
-      is_su ? 1 : 0
     ]);
 
     res.status(200).json({
@@ -40,7 +39,6 @@ export const updateSubjectMaxScore = async (
       batch_id: batch_id,
       subject_id: subject_id,
       new_max_score: max_score,
-      is_su: is_su
     });
   } catch (error) {
     console.error("Error updating max score:", error);
@@ -49,7 +47,7 @@ export const updateSubjectMaxScore = async (
 };
 
 // ==========================================
-// 4. ดึงข้อมูลคะแนนทั้งหมด (ของนักเรียน 1 คน)
+// 4. ดึงข้อมูลคะแนนทั้งหมด (ของนักเรียน 1 คน) ฝั่งนร
 // ==========================================
 export const getStudentScores = async (
   req: Request,
@@ -152,7 +150,7 @@ export const getAdminSubjectScores = async (
   }
 
   try {
-    const settingSql = `SELECT id as setting_id, max_score, is_su FROM subject_batch_settings WHERE batch_id = ? AND subject_id = ? LIMIT 1`;
+    const settingSql = `SELECT id as setting_id, max_score FROM subject_batch_settings WHERE batch_id = ? AND subject_id = ? LIMIT 1`;
     const [settingRows]: any = await conn.query(settingSql, [
       batch_id,
       subject_id,
@@ -189,7 +187,6 @@ export const getAdminSubjectScores = async (
     res.status(200).json({
       success: true,
       max_score: setting.max_score,
-      is_su: setting.is_su === 1,
       data: studentRows,
     });
   } catch (error) {
@@ -307,7 +304,7 @@ export const processGroupGrades = async (
 
     // 🌟 2. [ส่วนที่แก้ไข] ดึงข้อมูลวิชาย่อย เพื่อนำไปสร้างเป็นคอลัมน์ 🌟
     const groupSql = `
-      SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score, sbs.is_su
+      SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score
       FROM subject_groups sg
       JOIN subjects sub ON sg.id = sub.group_id
       JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
@@ -336,12 +333,8 @@ export const processGroupGrades = async (
         subject_id: s.subject_id,
         subject_name: s.subject_name,
         max_score: Number(s.max_score) || 0,
-        is_su: s.is_su === 1,
       };
     });
-
-    const isGroupSU = subjectsInGroup.some((s: any) => s.is_su === 1);
-
 
     // 🌟 3. [ส่วนที่แก้ไข] ดึงคะแนนดิบทั้งหมดแยกตามรายวิชา ไม่ใช้ SUM() แล้ว 🌟
     const scoreSql = `
@@ -383,25 +376,14 @@ export const processGroupGrades = async (
       const percent = (st.total_raw_score / totalGroupMaxScore) * 100;
 
       let assignedGrade = criteria[criteria.length - 1];
-      let indexValue = 0;
-
-      if (isGroupSU) {
-        // สำหรับวิชา S/U, ถ้า total_raw_score = 1 ถือว่าผ่าน (S)
-        if (st.total_raw_score > 0) {
-          assignedGrade = { grade_name: "S", grade_point: 0 };
-        } else {
-          assignedGrade = { grade_name: "U", grade_point: 0 };
+      for (const c of criteria) {
+        if (percent >= Number(c.min_percent)) {
+          assignedGrade = c;
+          break;
         }
-        indexValue = 0;
-      } else {
-        for (const c of criteria) {
-          if (percent >= Number(c.min_percent)) {
-            assignedGrade = c;
-            break;
-          }
-        }
-        indexValue = totalGroupCredit * Number(assignedGrade.grade_point);
       }
+
+      const indexValue = totalGroupCredit * Number(assignedGrade.grade_point);
 
       return {
         student_id: st.student_id,
@@ -473,7 +455,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         sg.group_name, 
         sg.credits AS credit, 
         sbs.max_score, 
-        sbs.is_su,
         sc.raw_score,
         -- ดึงคะแนนพิเศษ 3 ตัวมาจาก student_summary_scores
         sss.training_time_score,
@@ -513,9 +494,8 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           credit: Number(row.credit) || 0,
           subjects: [],
           group_max_score: 0,
-          is_su: false, // จะถูกอัปเดตถ้ามีวิชาไหนเป็น S/U
         };
-        // ยังไม่บวก totalCreditAll ที่นี่ เพราะต้องเช็ค S/U ก่อน
+        totalCreditAll += Number(row.credit) || 0;
       }
 
       const group = groupsMap[row.group_id];
@@ -528,15 +508,11 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           id: row.subject_id,
           name: row.subject_name,
           max_score: Number(row.max_score) || 0,
-          is_su: row.is_su === 1,
         };
         group.subjects.push(newSubject);
         masterSubjects.push(newSubject);
         group.group_max_score += newSubject.max_score;
         totalMaxScoreAll += newSubject.max_score;
-        if (newSubject.is_su) {
-          group.is_su = true;
-        }
       }
 
       // --- 🌟 จัดการข้อมูลนักเรียน (เพิ่มคะแนนพิเศษ 3 ก้อนเข้าไปที่นี่) 🌟 ---
@@ -571,9 +547,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
     });
 
     const subjectGroups = Object.values(groupsMap).map((grp: any) => {
-      if (!grp.is_su) {
-        totalCreditAll += grp.credit; // บวกเครดิตเฉพาะวิชาที่ไม่ใช่ S/U
-      }
       grp.isSingle = grp.subjects.length === 1;
       if (grp.isSingle) {
         grp.groupName = `${grp.subjects[0].name} ${grp.credit} นก.`;
@@ -604,25 +577,14 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
               : 0;
 
           let assignedGrade = criteria[criteria.length - 1];
-          let indexValue = 0;
-
-          if (grp.is_su) {
-            if (rawScore > 0) {
-              assignedGrade = { grade_name: "S", grade_point: 0 };
-            } else {
-              assignedGrade = { grade_name: "U", grade_point: 0 };
+          for (const c of criteria) {
+            if (percent >= Number(c.min_percent)) {
+              assignedGrade = c;
+              break;
             }
-            indexValue = 0;
-          } else {
-            for (const c of criteria) {
-              if (percent >= Number(c.min_percent)) {
-                assignedGrade = c;
-                break;
-              }
-            }
-            indexValue = grp.credit * Number(assignedGrade.grade_point);
           }
 
+          const indexValue = grp.credit * Number(assignedGrade.grade_point);
           student.group_results[grp.groupId] = {
             grade: assignedGrade.grade_name,
             index_value: indexValue.toFixed(2),
@@ -778,7 +740,9 @@ export const getScoreSubmissions = async (
     });
   } catch (error) {
     console.error("Error fetching score submissions:", error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูล" });
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูล" });
   }
 };
 
@@ -792,7 +756,9 @@ export const saveScoreSubmissions = async (
   const { batch_id, submissions } = req.body;
 
   if (!batch_id || !Array.isArray(submissions)) {
-    res.status(400).json({ success: false, message: "ข้อมูลที่ส่งมาไม่ถูกต้อง" });
+    res
+      .status(400)
+      .json({ success: false, message: "ข้อมูลที่ส่งมาไม่ถูกต้อง" });
     return;
   }
 
@@ -829,9 +795,10 @@ export const saveScoreSubmissions = async (
   } catch (error) {
     await connection.rollback();
     console.error("Error saving score submissions:", error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล" });
   } finally {
     connection.release();
   }
 };
-
