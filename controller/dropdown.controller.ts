@@ -91,6 +91,7 @@ export const getSubjectsByBatch = async (
       SELECT 
         sub.id AS subject_id, 
         sub.subject_name, 
+        sub.is_su,
         sub.group_id,     -- 🌟 เพิ่มบรรทัดนี้เข้ามาครับ! 🌟
         sg.group_name,
         COALESCE(sbs.max_score, 0) AS max_score
@@ -100,8 +101,15 @@ export const getSubjectsByBatch = async (
       WHERE sg.batch_id = ?
       ORDER BY sg.id ASC, sub.id ASC
     `;
-    const [rows] = await conn.query(sql, [batchId]);
-    res.status(200).json({ success: true, data: rows });
+    const [rows]: any = await conn.query(sql, [batchId]);
+    
+    // แปลง Buffer (TINYINT) ให้เป็น Boolean (ถ้าจำเป็น)
+    const formattedRows = rows.map((row: any) => ({
+      ...row,
+      is_su: Boolean(row.is_su)
+    }));
+
+    res.status(200).json({ success: true, data: formattedRows });
   } catch (error) {
     console.error("Error fetching subjects:", error);
     res
