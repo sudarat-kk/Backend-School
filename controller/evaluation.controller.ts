@@ -30,11 +30,24 @@ export const getGeneralEvaluation = async (
   res: Response,
 ): Promise<Response> => {
   const { batchId } = req.params;
-  const { type } = req.query;
+  const { type, targetGroup } = req.query;
 
   try {
-    const sql = `SELECT form_url FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1 LIMIT 1;`;
-    const [rows]: any = await conn.query(sql, [batchId, type]);
+    let sql = `SELECT form_url FROM evaluation_forms WHERE batch_id = ? AND is_active = 1`;
+    const params: any[] = [batchId];
+    
+    if (targetGroup) {
+      sql += ` AND target_group = ?`;
+      params.push(targetGroup);
+    }
+    if (type) {
+      sql += ` AND evaluation_type = ?`;
+      params.push(type);
+    }
+    
+    sql += ` LIMIT 1;`;
+    
+    const [rows]: any = await conn.query(sql, params);
 
     if (rows.length === 0) {
       return res.status(200).json({ success: true, data: [] });
@@ -46,6 +59,7 @@ export const getGeneralEvaluation = async (
       data: [{ form_url: rows[0].form_url }],
     });
   } catch (error: any) {
+    console.error("Error fetching general evaluation:", error);
     return res.status(500).json({ success: false, message: "Error" });
   }
 };
@@ -56,7 +70,7 @@ export const createEvaluation = async (
   res: Response,
 ): Promise<Response | void> => {
   // 1. รับข้อมูลโครงสร้างใหม่จาก Frontend (ตัด googleFormUrl ทิ้งไป รับ questions เข้ามาแทน)
-  const { formType, formName, generationId, subjectId, questions } = req.body;
+  const { formType, formName, generationId, subjectId, questions, targetGroup } = req.body;
 
   // เช็คว่ามีคำถามส่งมาด้วยไหม
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
@@ -74,14 +88,15 @@ export const createEvaluation = async (
     // 2. บันทึก "หัวฟอร์ม" ลงตาราง evaluation_forms (เอา form_url ออก)
     const sqlForm = `
       INSERT INTO evaluation_forms 
-      (batch_id, subject_id, evaluation_type, form_name, is_active, created_at, updated_at) 
-      VALUES (?, ?, ?, ?, 1, NOW(), NOW())
+      (batch_id, subject_id, evaluation_type, form_name, is_active, created_at, updated_at, target_group) 
+      VALUES (?, ?, ?, ?, 1, NOW(), NOW(), ?)
     `;
     const [formResult]: any = await connection.query(sqlForm, [
       generationId || null,
       subjectId || null,
       formType,
       formName,
+      targetGroup || 'student',
     ]);
 
     const formId = formResult.insertId; // ได้ ID ของฟอร์มมาเพื่อใช้ผูกกับคำถาม
