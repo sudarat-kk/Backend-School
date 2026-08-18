@@ -15,6 +15,7 @@ export const getSubjectsByBatch = async (
         sg.group_name,
         s.id AS subject_id,
         s.subject_name,
+        s.is_su,
         ef.form_url  -- ดึงฟิลด์ url ของฟอร์มออกมา
       FROM subject_groups sg
       LEFT JOIN subjects s ON sg.id = s.group_id
@@ -53,6 +54,7 @@ export const getSubjectsByBatch = async (
           groupsMap[row.group_id].subjects.push({
             subject_id: row.subject_id,
             subject_name: row.subject_name,
+            is_su: Boolean(row.is_su),
             form_url: row.form_url || null,
           });
         }
@@ -91,11 +93,11 @@ export const addSubjectGroup = async (req: Request, res: Response) => {
 };
 
 export const addSubject = async (req: Request, res: Response) => {
-  const { group_id, subject_name } = req.body;
+  const { group_id, subject_name, is_su = 0 } = req.body;
   try {
     const [result] = await conn.query(
-      "INSERT INTO subjects (group_id, subject_name) VALUES (?, ?)",
-      [group_id, subject_name],
+      "INSERT INTO subjects (group_id, subject_name, is_su) VALUES (?, ?, ?)",
+      [group_id, subject_name, is_su ? 1 : 0],
     );
     res.status(201).json({ success: true, message: "เพิ่มรายวิชาสำเร็จ" });
   } catch (error) {
