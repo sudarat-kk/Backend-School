@@ -12,7 +12,8 @@ export const getCourses = async (
       SELECT 
         c.course_name, 
         cb.id AS batch_id, 
-        cb.batch_name 
+        cb.batch_name,
+        cb.is_active
       FROM courses c
       LEFT JOIN course_batches cb ON c.id = cb.course_id
       ORDER BY c.id DESC, cb.id DESC
@@ -32,6 +33,7 @@ export const getCourses = async (
         course.batches.push({
           batch_id: row.batch_id,
           batch_name: row.batch_name,
+          is_active: Boolean(row.is_active)
         });
       }
       return acc;

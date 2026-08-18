@@ -13,7 +13,8 @@ export const getGroupedCourses = async (
                 c.curriculum_year,
                 b.id AS batch_id, 
                 b.batch_name, 
-                b.start_date
+                b.start_date,
+                b.is_active
             FROM courses c
             LEFT JOIN course_batches b ON c.id = b.course_id
             ORDER BY c.course_name ASC, c.curriculum_year ASC, b.start_date ASC;
@@ -27,6 +28,7 @@ export const getGroupedCourses = async (
       batch_id: number;
       batch_name: string;
       start_date: string;
+      is_active: boolean;
     }
 
     interface CourseGroup {
@@ -53,6 +55,7 @@ export const getGroupedCourses = async (
           batch_id: row.batch_id,
           batch_name: row.batch_name,
           start_date: row.start_date,
+          is_active: Boolean(row.is_active),
         });
       }
     });
@@ -144,6 +147,28 @@ export const updateBatch = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error updating batch:", error);
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการแก้ไขรุ่น" });
+  }
+};
+
+// เปิด-ปิดการแสดงผลรุ่น (Toggle Active)
+export const toggleBatchActive = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  
+  try {
+    const [result]: any = await conn.query(
+      "UPDATE course_batches SET is_active = ? WHERE id = ?",
+      [is_active ? 1 : 0, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบรุ่นที่ต้องการแก้ไข" });
+    }
+
+    res.json({ success: true, message: "เปลี่ยนสถานะสำเร็จ" });
+  } catch (error) {
+    console.error("Error toggling batch active:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการเปลี่ยนสถานะ" });
   }
 };
 

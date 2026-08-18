@@ -531,7 +531,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           group_max_score: 0,
           is_su: Boolean(row.is_su),
         };
-        totalCreditAll += Number(row.credit) || 0;
       }
 
       const group = groupsMap[row.group_id];
@@ -596,6 +595,13 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         grp.groupName = `รวม ${grp.subjects.length} วิชา ${grp.credit} นก.`;
       }
       return grp;
+    });
+
+    totalCreditAll = 0;
+    subjectGroups.forEach((grp: any) => {
+      if (!grp.is_su) {
+        totalCreditAll += grp.credit;
+      }
     });
 
     // 4. ตัดเกรดและคำนวณ GPA
