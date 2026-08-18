@@ -307,7 +307,7 @@ export const processGroupGrades = async (
 
     // 🌟 2. [ส่วนที่แก้ไข] ดึงข้อมูลวิชาย่อย เพื่อนำไปสร้างเป็นคอลัมน์ 🌟
     const groupSql = `
-      SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score
+      SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score, sbs.is_su
       FROM subject_groups sg
       JOIN subjects sub ON sg.id = sub.group_id
       JOIN subject_batch_settings sbs ON sub.id = sbs.subject_id
@@ -336,8 +336,11 @@ export const processGroupGrades = async (
         subject_id: s.subject_id,
         subject_name: s.subject_name,
         max_score: Number(s.max_score) || 0,
+        is_su: Boolean(s.is_su),
       };
     });
+
+    const isGroupSU = subjectColumns.length > 0 && subjectColumns.every((s: any) => s.is_su);
 
     // 🌟 3. [ส่วนที่แก้ไข] ดึงคะแนนดิบทั้งหมดแยกตามรายวิชา ไม่ใช้ SUM() แล้ว 🌟
     const scoreSql = `
@@ -361,7 +364,7 @@ export const processGroupGrades = async (
         studentMap.set(row.student_id, {
           student_id: row.student_id,
           student_code: row.student_code,
-          full_name: `${row.rank_name} ${row.first_name} ${row.last_name}`,
+          full_name: `${row.rank_name || ''} ${row.first_name} ${row.last_name}`.trim(),
           total_raw_score: 0,
           subject_scores: {}, // 👈 กระเป๋าเก็บคะแนนแต่ละวิชา
         });
@@ -376,7 +379,25 @@ export const processGroupGrades = async (
 
     // 4. ตัดเกรดและคำนวณค่าประกอบ (Index)
     const finalResults = Array.from(studentMap.values()).map((st: any) => {
-      const percent = (st.total_raw_score / totalGroupMaxScore) * 100;
+      if (isGroupSU) {
+        const isPassed = st.total_raw_score > 0;
+        const suGrade = isPassed ? "S" : "U";
+        const percent = isPassed ? 100 : 0;
+        return {
+          student_id: st.student_id,
+          student_code: st.student_code,
+          full_name: st.full_name,
+          total_raw_score: st.total_raw_score.toFixed(2),
+          total_max_score: totalGroupMaxScore,
+          percent: percent.toFixed(2),
+          grade: suGrade,
+          grade_point: suGrade,
+          index_value: suGrade,
+          subject_scores: st.subject_scores,
+        };
+      }
+
+      const percent = totalGroupMaxScore > 0 ? (st.total_raw_score / totalGroupMaxScore) * 100 : 0;
 
       let assignedGrade = criteria[criteria.length - 1];
       for (const c of criteria) {
@@ -458,6 +479,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         sg.group_name, 
         sg.credits AS credit, 
         sbs.max_score, 
+        sbs.is_su,
         sc.raw_score,
         -- ดึงคะแนนพิเศษ 3 ตัวมาจาก student_summary_scores
         sss.training_time_score,
@@ -497,11 +519,17 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           credit: Number(row.credit) || 0,
           subjects: [],
           group_max_score: 0,
+          is_su: Boolean(row.is_su),
         };
         totalCreditAll += Number(row.credit) || 0;
       }
 
       const group = groupsMap[row.group_id];
+
+      // If any subject in group is not SU, the group is not fully SU
+      if (!row.is_su) {
+        group.is_su = false;
+      }
 
       const isSubjectExist = group.subjects.find(
         (s: any) => s.id === row.subject_id,
@@ -511,6 +539,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           id: row.subject_id,
           name: row.subject_name,
           max_score: Number(row.max_score) || 0,
+          is_su: Boolean(row.is_su),
         };
         group.subjects.push(newSubject);
         masterSubjects.push(newSubject);
@@ -574,32 +603,42 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       Object.values(groupsMap).forEach((grp: any) => {
         const rawScore = student.group_raw_scores[grp.groupId];
         if (rawScore !== undefined) {
-          const percent =
-            grp.group_max_score > 0
-              ? (rawScore / grp.group_max_score) * 100
-              : 0;
+          if (grp.is_su) {
+            const isPassed = rawScore > 0;
+            const suGrade = isPassed ? "S" : "U";
+            student.group_results[grp.groupId] = {
+              grade: suGrade,
+              index_value: suGrade,
+              raw_score: rawScore,
+            };
+          } else {
+            const percent =
+              grp.group_max_score > 0
+                ? (rawScore / grp.group_max_score) * 100
+                : 0;
 
-          let assignedGrade = criteria[criteria.length - 1];
-          for (const c of criteria) {
-            if (percent >= Number(c.min_percent)) {
-              assignedGrade = c;
-              break;
+            let assignedGrade = criteria[criteria.length - 1];
+            for (const c of criteria) {
+              if (percent >= Number(c.min_percent)) {
+                assignedGrade = c;
+                break;
+              }
             }
-          }
 
-          const indexValue = grp.credit * Number(assignedGrade.grade_point);
-          student.group_results[grp.groupId] = {
-            grade: assignedGrade.grade_name,
-            index_value: indexValue.toFixed(2),
-            raw_score: rawScore,
-          };
+            const indexValue = grp.credit * Number(assignedGrade.grade_point);
+            student.group_results[grp.groupId] = {
+              grade: assignedGrade.grade_name,
+              index_value: indexValue.toFixed(2),
+              raw_score: rawScore,
+            };
 
-          if (
-            assignedGrade.grade_name !== "S" &&
-            assignedGrade.grade_name !== "U"
-          ) {
-            totalIndexForGPA += indexValue;
-            totalCreditForGPA += grp.credit;
+            if (
+              assignedGrade.grade_name !== "S" &&
+              assignedGrade.grade_name !== "U"
+            ) {
+              totalIndexForGPA += indexValue;
+              totalCreditForGPA += grp.credit;
+            }
           }
         }
       });
