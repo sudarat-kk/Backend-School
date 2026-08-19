@@ -147,15 +147,25 @@ export const addStudent = async (
   } = req.body;
 
   // ตรวจสอบว่ามีการส่งข้อมูลที่จำเป็นมาครบหรือไม่
-  if (!batch_id || !student_code || !first_name) {
+  if (!batch_id || !first_name) {
     return res.status(400).json({
-      message: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (รุ่น, รหัสประจำตัว, ชื่อ)",
+      message: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (รุ่น, ชื่อ)",
     });
   }
 
   let connection;
   try {
     connection = await conn.getConnection();
+    await connection.beginTransaction();
+
+    let finalStudentCode = student_code;
+    if (!finalStudentCode) {
+      const [countResult]: any = await connection.execute(
+        'SELECT COUNT(*) as count FROM students WHERE batch_id = ?',
+        [batch_id]
+      );
+      finalStudentCode = (countResult[0].count + 1).toString();
+    }
 
     const query = `
       INSERT INTO students 
@@ -168,7 +178,7 @@ export const addStudent = async (
 
     await connection.execute(query, [
       batch_id,
-      student_code,
+      finalStudentCode,
       defaultPassword,
       rank_name || "",
       first_name,
@@ -176,8 +186,10 @@ export const addStudent = async (
       affiliation || "",
     ]);
 
+    await connection.commit();
     return res.status(201).json({ message: "เพิ่มข้อมูลนักเรียนสำเร็จ" });
   } catch (error: any) {
+    if (connection) await connection.rollback();
     console.error(error);
 
     // ดักจับกรณีรหัสประจำตัวนักเรียนซ้ำ (Duplicate Entry) ในฐานข้อมูล
@@ -282,18 +294,34 @@ export const deleteStudent = async (
   let connection;
   try {
     connection = await conn.getConnection();
+    await connection.beginTransaction();
 
-    const query = `DELETE FROM students WHERE id = ?`;
-    const [result]: any = await connection.execute(query, [id]);
+    // ดึง batch_id ก่อนที่จะลบ
+    const [studentRows]: any = await connection.execute('SELECT batch_id FROM students WHERE id = ?', [id]);
+    if (studentRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
+    }
+    const batch_id = studentRows[0].batch_id;
 
-    if (result.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
+    // ลบนักเรียน
+    await connection.execute(`DELETE FROM students WHERE id = ?`, [id]);
+
+    // จัดเรียงเลขที่ใหม่ให้กับนักเรียนที่เหลือในรุ่นนี้
+    const [remainingStudents]: any = await connection.execute(
+      `SELECT id FROM students WHERE batch_id = ? ORDER BY CAST(student_code AS UNSIGNED) ASC, id ASC`,
+      [batch_id]
+    );
+
+    for (let i = 0; i < remainingStudents.length; i++) {
+      const newCode = (i + 1).toString();
+      await connection.execute(`UPDATE students SET student_code = ? WHERE id = ?`, [newCode, remainingStudents[i].id]);
     }
 
-    return res.status(200).json({ message: "ลบข้อมูลนักเรียนสำเร็จ" });
+    await connection.commit();
+    return res.status(200).json({ message: "ลบและจัดเรียงเลขที่ใหม่สำเร็จ" });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error(error);
     return res.status(500).json({ message: "เกิดข้อผิดพลาดในการลบข้อมูล" });
   } finally {
