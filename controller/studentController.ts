@@ -300,3 +300,45 @@ export const deleteStudent = async (
     }
   }
 };
+
+export const resequenceStudents = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  const { batch_id } = req.params;
+
+  if (!batch_id) {
+    return res.status(400).json({ message: "กรุณาระบุ Batch ID" });
+  }
+
+  let connection;
+  try {
+    connection = await conn.getConnection();
+    await connection.beginTransaction();
+
+    // ดึงข้อมูลนักเรียนทั้งหมดในรุ่น เรียงตามเลขที่ปัจจุบัน
+    const selectQuery = `
+      SELECT id, student_code 
+      FROM students 
+      WHERE batch_id = ? 
+      ORDER BY CAST(student_code AS UNSIGNED) ASC, id ASC
+    `;
+    const [students]: any = await connection.execute(selectQuery, [batch_id]);
+
+    // อัปเดตเลขที่ใหม่ให้เรียงกัน
+    for (let i = 0; i < students.length; i++) {
+      const newCode = (i + 1).toString();
+      const updateQuery = `UPDATE students SET student_code = ? WHERE id = ?`;
+      await connection.execute(updateQuery, [newCode, students[i].id]);
+    }
+
+    await connection.commit();
+    return res.status(200).json({ message: "จัดเรียงเลขที่ใหม่สำเร็จ" });
+  } catch (error: any) {
+    if (connection) await connection.rollback();
+    console.error(error);
+    return res.status(500).json({ message: "เกิดข้อผิดพลาดในการจัดเรียงเลขที่" });
+  } finally {
+    if (connection) connection.release();
+  }
+};

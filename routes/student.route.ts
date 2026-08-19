@@ -6,6 +6,7 @@ import {
   getStudents,
   updateStudent,
   uploadStudent,
+  resequenceStudents,
 } from "../controller/studentController";
 
 const router = express.Router();
@@ -18,6 +19,7 @@ const upload = multer({ dest: "uploads/" });
 router.post("/students/upload", upload.single("csvFile"), uploadStudent);
 router.get("/students", getStudents);
 router.post("/students/add", addStudent);
+router.put("/students/resequence/:batch_id", resequenceStudents);
 router.put("/students/:id", updateStudent);
 router.delete("/students/:id", deleteStudent);
 
