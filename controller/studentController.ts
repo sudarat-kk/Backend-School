@@ -114,6 +114,8 @@ export const getStudents = async (
       query += ` WHERE batch_id = ?`;
       params.push(batch_id);
     }
+    
+    query += ` ORDER BY CAST(student_code AS UNSIGNED) ASC, id ASC`;
 
     const [rows] = await connection.execute(query, params);
     return res.status(200).json(rows);
