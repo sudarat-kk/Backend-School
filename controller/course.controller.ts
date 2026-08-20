@@ -14,6 +14,7 @@ export const getGroupedCourses = async (
                 b.id AS batch_id, 
                 b.batch_name, 
                 b.start_date,
+                b.end_date,
                 b.is_active
             FROM courses c
             LEFT JOIN course_batches b ON c.id = b.course_id
@@ -28,6 +29,7 @@ export const getGroupedCourses = async (
       batch_id: number;
       batch_name: string;
       start_date: string;
+      end_date: string;
       is_active: boolean;
     }
 
@@ -55,6 +57,7 @@ export const getGroupedCourses = async (
           batch_id: row.batch_id,
           batch_name: row.batch_name,
           start_date: row.start_date,
+          end_date: row.end_date,
           is_active: Boolean(row.is_active),
         });
       }
