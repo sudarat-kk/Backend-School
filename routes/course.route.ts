@@ -9,6 +9,7 @@ import {
   deleteBatch,
   deleteCourse,
   toggleBatchActive,
+  toggleRegistration,
 } from "../controller/course.controller";
 import {
   addSubject,
@@ -26,6 +27,7 @@ router.post("/courses", addCourse);
 router.post("/batches", addBatch);
 router.put("/batches/:id", updateBatch);
 router.put("/batches/:id/toggle-active", toggleBatchActive);
+router.put("/batches/:id/toggle-registration", toggleRegistration);
 router.delete("/batches/:id", deleteBatch);
 router.delete("/courses/:id", deleteCourse);
 router.post("/subject-groups", addSubjectGroup);

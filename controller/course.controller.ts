@@ -15,7 +15,8 @@ export const getGroupedCourses = async (
                 b.batch_name, 
                 b.start_date,
                 b.end_date,
-                b.is_active
+                b.is_active,
+                b.is_registration_open
             FROM courses c
             LEFT JOIN course_batches b ON c.id = b.course_id
             ORDER BY c.course_name ASC, c.curriculum_year ASC, b.start_date ASC;
@@ -31,6 +32,7 @@ export const getGroupedCourses = async (
       start_date: string;
       end_date: string;
       is_active: boolean;
+      is_registration_open: boolean;
     }
 
     interface CourseGroup {
@@ -59,6 +61,7 @@ export const getGroupedCourses = async (
           start_date: row.start_date,
           end_date: row.end_date,
           is_active: Boolean(row.is_active),
+          is_registration_open: Boolean(row.is_registration_open),
         });
       }
     });
@@ -171,6 +174,28 @@ export const toggleBatchActive = async (req: Request, res: Response) => {
     res.json({ success: true, message: "เปลี่ยนสถานะสำเร็จ" });
   } catch (error) {
     console.error("Error toggling batch active:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการเปลี่ยนสถานะ" });
+  }
+};
+
+// เปิด-ปิดการรับสมัคร (Toggle Registration)
+export const toggleRegistration = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { is_registration_open } = req.body;
+  
+  try {
+    const [result]: any = await conn.query(
+      "UPDATE course_batches SET is_registration_open = ? WHERE id = ?",
+      [is_registration_open ? 1 : 0, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบรุ่นที่ต้องการแก้ไข" });
+    }
+
+    res.json({ success: true, message: "เปลี่ยนสถานะการรับสมัครสำเร็จ" });
+  } catch (error) {
+    console.error("Error toggling registration:", error);
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการเปลี่ยนสถานะ" });
   }
 };
